@@ -1,0 +1,139 @@
+{
+  "schemaVersion": "video-pipeline.external-generation.batch.v1",
+  "exportedAt": "2026-03-31T00:00:00Z",
+  "filters": {
+    "projectId": 9,
+    "videoId": 123,
+    "status": "waiting_media"
+  },
+  "totalVideos": 1,
+  "totalVariants": 1,
+  "videos": [
+    {
+      "videoId": 123,
+      "projectId": 9,
+      "runId": "20260331_000000_000",
+      "title": "Mock pipeline demo",
+      "status": "waiting_media",
+      "createdAt": "2026-03-31T00:00:00Z",
+      "updatedAt": "2026-03-31T00:00:00Z",
+      "project": {
+        "id": 9,
+        "name": "Demo project",
+        "slug": "demo-project"
+      },
+      "videoTemplate": {
+        "id": 2,
+        "key": "youtube_shorts_test",
+        "name": "Portrait"
+      },
+      "outputProfile": {
+        "width": 720,
+        "height": 1280,
+        "fps": 24
+      },
+      "deliveryProfile": {},
+      "subtitleStyle": {},
+      "requestSnapshot": {},
+      "variants": [
+        {
+          "key": "v01",
+          "label": "Variant 1",
+          "status": "waiting_media",
+          "externalGenerationManifestPath": "exports/manifest.json",
+          "externalGenerationManifestUrl": "/media/exports/manifest.json",
+          "manifestFound": true,
+          "manifest": {
+            "schemaVersion": "video-pipeline.external-generation.manifest.v1",
+            "mode": "deferred_generation",
+            "generatedAt": "2026-03-31T00:00:00Z",
+            "runId": "20260331_000000_000",
+            "variantKey": "v01",
+            "variantLabel": "Variant 1",
+            "promptLanguage": "en",
+            "targetDurationSec": 16,
+            "speechDurationSec": 15.4,
+            "segmentDurationSec": 8,
+            "totalSegments": 2,
+            "projectContext": {
+              "videoName": "Mock pipeline demo",
+              "mainRequest": "A vivid short-form video about future cities.",
+              "preferredStyle": "cinematic realism",
+              "extraRequirements": "Keep the pace dynamic.",
+              "globalRules": "Portrait framing only.",
+              "outputProfile": {
+                "width": 720,
+                "height": 1280,
+                "fps": 24
+              },
+              "deliveryProfile": {}
+            },
+            "globalVisualDirection": "Golden-hour lighting, cinematic camera motion, rich depth.",
+            "globalNegativePrompt": "blurry, low quality, distorted anatomy, text overlays",
+            "sourceArtifacts": {
+              "narrationTextPath": "source/narration.txt",
+              "alignmentJsonPath": "source/alignment.json",
+              "promptPreviewPath": "source/prompt-preview.md"
+            },
+            "segments": [
+              {
+                "segmentId": "20260331_000000_000_v01_s01",
+                "segmentIndex": 1,
+                "timeline": {
+                  "startSec": 0,
+                  "endSec": 8,
+                  "effectiveDurationSec": 8,
+                  "generationDurationSec": 8
+                },
+                "narration": {
+                  "spokenText": "The city wakes up with magnetic trains weaving between vertical gardens.",
+                  "subtitleText": "The city wakes up with magnetic trains weaving between vertical gardens.",
+                  "keywords": [
+                    "city",
+                    "trains",
+                    "gardens"
+                  ],
+                  "wordTimeline": [],
+                  "subtitleSegments": []
+                },
+                "generation": {
+                  "prompt": "A sunrise reveal of a futuristic skyline with elevated trains and lush green towers.",
+                  "negativePrompt": "fogged lens, underexposed",
+                  "continuityNote": "Establish the world and the main architectural style.",
+                  "shotGoal": "Wide opening shot."
+                }
+              },
+              {
+                "segmentId": "20260331_000000_000_v01_s02",
+                "segmentIndex": 2,
+                "timeline": {
+                  "startSec": 8,
+                  "endSec": 16,
+                  "effectiveDurationSec": 8,
+                  "generationDurationSec": 8
+                },
+                "narration": {
+                  "spokenText": "At street level, autonomous delivery pods glide past interactive storefronts.",
+                  "subtitleText": "At street level, autonomous delivery pods glide past interactive storefronts.",
+                  "keywords": [
+                    "street",
+                    "pods",
+                    "storefronts"
+                  ],
+                  "wordTimeline": [],
+                  "subtitleSegments": []
+                },
+                "generation": {
+                  "prompt": "A street-level tracking shot with autonomous pods and responsive holographic shop windows.",
+                  "negativePrompt": "shaky camera, dull colors",
+                  "continuityNote": "Preserve the same architecture and lighting from segment one.",
+                  "shotGoal": "Closer kinetic follow shot."
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

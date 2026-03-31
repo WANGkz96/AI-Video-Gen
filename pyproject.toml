@@ -1,0 +1,37 @@
+[project]
+name = "ai-video-generation-service"
+version = "0.1.0"
+description = "Batch and direct video generation service with adapter-based backends and Vue monitoring UI."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.116.0",
+  "httpx>=0.28.1",
+  "opencv-python-headless>=4.12.0",
+  "python-multipart>=0.0.20",
+  "uvicorn[standard]>=0.35.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.4.0",
+  "ruff>=0.12.0",
+]
+
+[build-system]
+requires = ["setuptools>=80.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = [
+  "backend",
+  "backend.app",
+  "backend.app.adapters",
+  "backend.app.models",
+  "backend.app.services",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
