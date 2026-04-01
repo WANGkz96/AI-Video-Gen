@@ -174,11 +174,11 @@ class DiffusersVideoAdapter(BaseGeneratorAdapter):
 
     def _download_assets(self) -> Path:
         try:
-            from huggingface_hub import snapshot_download
+            from huggingface_hub import hf_hub_download, snapshot_download
         except Exception as exc:
             raise AdapterUnavailableError(f"Cannot download model assets: {exc}") from exc
 
-        if self._spec.status == "planned":
+        if self._spec.status == "planned" and not self._spec.download_files:
             raise AdapterUnavailableError(self._spec.notes or f"{self._spec.key} is not wired yet.")
 
         local_dir = self._local_model_dir()
@@ -186,6 +186,18 @@ class DiffusersVideoAdapter(BaseGeneratorAdapter):
             return local_dir
 
         os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+        local_dir.mkdir(parents=True, exist_ok=True)
+        if self._spec.download_files:
+            for filename in self._spec.download_files:
+                hf_hub_download(
+                    repo_id=self._spec.model_id,
+                    filename=filename,
+                    local_dir=local_dir,
+                    local_dir_use_symlinks=False,
+                    token=self._settings.hf_token,
+                )
+            return local_dir
+
         snapshot_download(
             repo_id=self._spec.model_id,
             local_dir=local_dir,

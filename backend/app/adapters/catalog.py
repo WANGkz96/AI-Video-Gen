@@ -31,6 +31,7 @@ class DiffusersBackendSpec:
     enable_vae_slicing: bool = True
     enable_attention_slicing: bool = True
     load_kwargs: dict[str, Any] = field(default_factory=dict)
+    download_files: tuple[str, ...] = field(default_factory=tuple)
     static_call_kwargs: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -142,6 +143,24 @@ def get_diffusers_backend_specs() -> dict[str, DiffusersBackendSpec]:
                 "device_map": "balanced",
             },
         ),
+        "ltx-2.3": DiffusersBackendSpec(
+            key="ltx-2.3",
+            label="LTX 2.3",
+            description="LTX 2.3 full checkpoint family from Lightricks.",
+            model_id="Lightricks/LTX-2.3",
+            pipeline_candidates=("LTX2Pipeline", "LTXPipeline"),
+            task="text-to-video",
+            status="planned",
+            minimum_vram_gb=32,
+            default_width=704,
+            default_height=480,
+            default_fps=16.0,
+            default_steps=8,
+            default_guidance_scale=1.0,
+            recommended_dtype="float16",
+            notes="Official model card provides native PyTorch and ComfyUI paths; Diffusers support is still marked as coming soon.",
+            download_files=("ltx-2.3-22b-dev.safetensors", "README.md"),
+        ),
         "ltx-2.3-distilled": DiffusersBackendSpec(
             key="ltx-2.3-distilled",
             label="LTX 2.3 Distilled",
@@ -157,6 +176,7 @@ def get_diffusers_backend_specs() -> dict[str, DiffusersBackendSpec]:
             default_steps=20,
             default_guidance_scale=4.0,
             recommended_dtype="float16",
-            notes="Official model card says Diffusers support is coming soon; scaffold kept for native/single-file integration later.",
+            notes="Official model card says Diffusers support is coming soon; installer downloads the official distilled checkpoint for later native integration.",
+            download_files=("ltx-2.3-22b-distilled.safetensors", "README.md"),
         ),
     }
