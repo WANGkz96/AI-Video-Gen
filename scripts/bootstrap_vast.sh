@@ -32,7 +32,9 @@ cd "${ROOT_DIR}"
 mkdir -p models data/jobs data/archives data/tmp
 
 if ! python3 -m venv --help >/dev/null 2>&1; then
-  ensure_apt_packages python3 python3-venv python3-pip
+  ensure_apt_packages python3 python3-venv python3-pip git
+else
+  ensure_apt_packages git
 fi
 
 python3 -m venv "${VENV_DIR}"

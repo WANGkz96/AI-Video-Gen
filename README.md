@@ -53,6 +53,24 @@ npm run dev
 - копирует его в выходную структуру job;
 - пишет debug-информацию о том, какой исходник был использован.
 
+## Real Models
+
+- `cogvideox-5b`, `wan2.2-ti2v-5b`, `sana-video-2b`, `hunyuan-video-1.5`, `ltx-2-distilled` работают через Diffusers.
+- `ltx-2.3` работает через официальный native runtime от Lightricks, а не через Diffusers.
+- При `download-models` или `scripts/deploy_vast.sh` для `ltx-2.3` сервис:
+  - скачивает `ltx-2.3-22b-dev.safetensors` в `models/ltx-2.3/`;
+  - скачивает Gemma 3 assets в `models/gemma-3-12b-it-qat-q4_0-unquantized/`;
+  - клонирует pinned revision официального `LTX-2` runtime в `data/runtime/ltx-2-official/`;
+  - устанавливает `ltx-core` и `ltx-pipelines` в текущее виртуальное окружение.
+
+Для полного Vast deploy:
+
+```bash
+git clone https://github.com/WANGkz96/AI-Video-Gen.git
+cd AI-Video-Gen
+PORT=8090 MODELS=all ./scripts/deploy_vast.sh
+```
+
 ## ComfyUI Foundation
 
 В [`backend/app/adapters/comfyui.py`](./backend/app/adapters/comfyui.py) есть каркас под backend `comfyui-workflow`. Он пока не запускает workflow реально, но уже выделяет место под payload builder и будущий вызов внешнего ComfyUI API.
@@ -60,4 +78,3 @@ npm run dev
 ## Пример входного batch
 
 Файл для локальной проверки лежит в [`examples/sample-batch.json`](./examples/sample-batch.json).
-

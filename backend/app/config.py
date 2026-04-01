@@ -19,6 +19,7 @@ class Settings:
     jobs_dir: Path
     archive_dir: Path
     temp_dir: Path
+    ltx_runtime_repo_dir: Path
     models_dir: Path
     generator_backend: str
     generator_api_url: str
@@ -34,6 +35,9 @@ class Settings:
         jobs_dir = Path(os.getenv("JOBS_DIR", workdir / "jobs")).resolve()
         archive_dir = Path(os.getenv("ARCHIVE_DIR", workdir / "archives")).resolve()
         temp_dir = Path(os.getenv("TEMP_DIR", workdir / "tmp")).resolve()
+        ltx_runtime_repo_dir = Path(
+            os.getenv("LTX_RUNTIME_REPO_DIR", workdir / "runtime" / "ltx-2-official")
+        ).resolve()
         models_dir = Path(os.getenv("MODELS_DIR", REPO_ROOT / "models")).resolve()
         frontend_dist_dir = Path(
             os.getenv("FRONTEND_DIST_DIR", REPO_ROOT / "frontend" / "dist")
@@ -45,6 +49,7 @@ class Settings:
             jobs_dir=jobs_dir,
             archive_dir=archive_dir,
             temp_dir=temp_dir,
+            ltx_runtime_repo_dir=ltx_runtime_repo_dir,
             models_dir=models_dir,
             generator_backend=os.getenv("GENERATOR_BACKEND", "mock-gen"),
             generator_api_url=os.getenv("GENERATOR_API_URL", "http://localhost:8188"),
@@ -65,4 +70,5 @@ class Settings:
         self.jobs_dir.mkdir(parents=True, exist_ok=True)
         self.archive_dir.mkdir(parents=True, exist_ok=True)
         self.temp_dir.mkdir(parents=True, exist_ok=True)
+        self.ltx_runtime_repo_dir.parent.mkdir(parents=True, exist_ok=True)
         self.models_dir.mkdir(parents=True, exist_ok=True)
