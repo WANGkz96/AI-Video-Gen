@@ -72,6 +72,8 @@ cd AI-Video-Gen
 PORT=8090 MODELS=all ./scripts/deploy_vast.sh
 ```
 
+Для автозапуска через Vast template, `PROVISIONING_SCRIPT` и кнопки во `Instance Portal` см. [`docs/vast-template.md`](./docs/vast-template.md).
+
 ## ComfyUI Foundation
 
 В [`backend/app/adapters/comfyui.py`](./backend/app/adapters/comfyui.py) есть каркас под backend `comfyui-workflow`. Он пока не запускает workflow реально, но уже выделяет место под payload builder и будущий вызов внешнего ComfyUI API.
