@@ -263,6 +263,9 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
         if not self._checkpoint_path().is_file() or not self._gemma_ready():
             self._download_assets()
             return
+        repo_dir = self._runtime_repo_dir()
+        if repo_dir.is_dir():
+            self._patch_runtime_sources(repo_dir)
         if not self._runtime_installed():
             self._install_runtime()
 
@@ -288,6 +291,7 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
             [git_executable, "-C", repo_dir.as_posix(), "checkout", "--force", self._spec.runtime_repo_ref],
             "Failed to checkout the pinned official LTX runtime revision.",
         )
+        self._patch_runtime_sources(repo_dir)
 
         runtime_env = os.environ.copy()
         runtime_env.setdefault("PIP_DISABLE_PIP_VERSION_CHECK", "1")
@@ -310,6 +314,58 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
 
         if not self._runtime_installed():
             raise AdapterUnavailableError("The official LTX runtime was installed, but ltx_pipelines is still unavailable.")
+
+    def _patch_runtime_sources(self, repo_dir: Path) -> None:
+        self._patch_gemma_transformers_compat(repo_dir)
+        self._patch_ti2vid_one_stage_dtype(repo_dir)
+
+    def _patch_gemma_transformers_compat(self, repo_dir: Path) -> None:
+        target = (
+            repo_dir
+            / "packages"
+            / "ltx-core"
+            / "src"
+            / "ltx_core"
+            / "text_encoders"
+            / "gemma"
+            / "encoders"
+            / "encoder_configurator.py"
+        )
+        if not target.is_file():
+            return
+
+        source = target.read_text(encoding="utf-8")
+        marker = "# Compat shim for newer Gemma3TextConfig rope_parameters format."
+        if marker in source:
+            return
+
+        old = """    config = model.config.text_config\n    dim = getattr(config, \"head_dim\", config.hidden_size // config.num_attention_heads)\n    base = config.rope_local_base_freq\n    local_rope_freqs = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.int64).to(dtype=torch.float) / dim))\n    inv_freqs, _ = ROPE_INIT_FUNCTIONS[config.rope_scaling[\"rope_type\"]](config)\n"""
+        new = """    config = model.config.text_config\n    dim = getattr(config, \"head_dim\", config.hidden_size // config.num_attention_heads)\n\n    # Compat shim for newer Gemma3TextConfig rope_parameters format.\n    rope_parameters = getattr(config, \"rope_parameters\", None)\n    if isinstance(rope_parameters, dict):\n        local_params = rope_parameters.get(\"sliding_attention\") or {}\n        full_params = rope_parameters.get(\"full_attention\") or {}\n        local_base = local_params.get(\n            \"rope_theta\",\n            getattr(config, \"rope_local_base_freq\", getattr(config, \"rope_theta\", 10000.0)),\n        )\n        full_rope_type = full_params.get(\"rope_type\", \"default\")\n        if full_rope_type == \"default\":\n            full_base = full_params.get(\"rope_theta\", getattr(config, \"rope_theta\", 10000.0))\n            inv_freqs = 1.0 / (\n                full_base ** (torch.arange(0, dim, 2, dtype=torch.int64).to(dtype=torch.float) / dim)\n            )\n        else:\n            inv_freqs, _ = ROPE_INIT_FUNCTIONS[full_rope_type](config, layer_type=\"full_attention\")\n    else:\n        local_base = getattr(config, \"rope_local_base_freq\", getattr(config, \"rope_theta\", 10000.0))\n        inv_freqs, _ = ROPE_INIT_FUNCTIONS[config.rope_scaling[\"rope_type\"]](config)\n\n    local_rope_freqs = 1.0 / (\n        local_base ** (torch.arange(0, dim, 2, dtype=torch.int64).to(dtype=torch.float) / dim)\n    )\n"""
+        if old not in source:
+            return
+        target.write_text(source.replace(old, new, 1), encoding="utf-8")
+
+    def _patch_ti2vid_one_stage_dtype(self, repo_dir: Path) -> None:
+        target = repo_dir / "packages" / "ltx-pipelines" / "src" / "ltx_pipelines" / "ti2vid_one_stage.py"
+        if not target.is_file():
+            return
+
+        source = target.read_text(encoding="utf-8")
+        marker = "torch.cuda.is_bf16_supported()"
+        if marker in source and "dtype = self.dtype" in source:
+            return
+
+        init_old = """        self.dtype = torch.bfloat16\n        self.device = device or get_device()\n"""
+        init_new = """        self.device = device or get_device()\n        self.dtype = (\n            torch.bfloat16\n            if self.device.type == \"cuda\" and torch.cuda.is_available() and torch.cuda.is_bf16_supported()\n            else torch.float16\n        )\n"""
+        call_old = """        dtype = torch.bfloat16\n"""
+        call_new = """        dtype = self.dtype\n"""
+        updated = source
+        if init_old in updated:
+            updated = updated.replace(init_old, init_new, 1)
+        if call_old in updated:
+            updated = updated.replace(call_old, call_new, 1)
+        if updated != source:
+            target.write_text(updated, encoding="utf-8")
 
     def _build_command(
         self, request: SegmentGenerationRequest
