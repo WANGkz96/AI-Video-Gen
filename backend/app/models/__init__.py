@@ -152,6 +152,10 @@ class AdapterInfo(BaseSchema):
     supportsBatch: bool = True
     supportsDirect: bool = True
     requiresRemote: bool = False
+    requiresDownload: bool = False
+    modelId: str | None = None
+    localPath: str | None = None
+    minimumVramGb: int | None = None
     notes: str | None = None
 
 
@@ -245,4 +249,3 @@ class DirectGenerationRequest(BaseSchema):
     globalVisualDirection: str = ""
     globalNegativePrompt: str = ""
     backendParams: dict[str, Any] = Field(default_factory=dict)
-

@@ -57,7 +57,15 @@ type ResultPayload = {
   errors?: Array<{ error: string; segmentId?: string; variantKey?: string }>;
 };
 
-const health = ref<Record<string, unknown> | null>(null);
+type HealthPayload = {
+  status: string;
+  defaultBackend: string;
+  queuedJobs: number;
+  activeJobs: number;
+  frontendBuilt: boolean;
+};
+
+const health = ref<HealthPayload | null>(null);
 const backends = ref<BackendInfo[]>([]);
 const selectedBatchBackend = ref("mock-gen");
 const batchFile = ref<File | null>(null);
@@ -74,6 +82,8 @@ const directForm = ref({
   width: 720,
   height: 1280,
   fps: 24,
+  numInferenceSteps: 8,
+  seed: 42,
   globalVisualDirection: "Portrait frame, cinematic realism, warm lighting.",
   globalNegativePrompt: "text overlays, artifacts, deformation",
 });
@@ -145,6 +155,12 @@ async function loadBootstrap() {
   ]);
   health.value = await healthResponse.json();
   backends.value = await backendResponse.json();
+  const available = backends.value.filter((backend) => backend.available);
+  const fallback = available.find((backend) => backend.key === health.value?.defaultBackend) ?? available[0];
+  if (fallback) {
+    selectedBatchBackend.value = fallback.key;
+    selectedDirectBackend.value = fallback.key;
+  }
 }
 
 async function startBatchJob() {
@@ -181,6 +197,10 @@ async function startDirectJob() {
       body: JSON.stringify({
         backend: selectedDirectBackend.value,
         ...directForm.value,
+        backendParams: {
+          num_inference_steps: directForm.value.numInferenceSteps,
+          seed: directForm.value.seed,
+        },
       }),
     });
     const payload = await response.json();
@@ -336,6 +356,10 @@ onBeforeUnmount(() => {
           <label class="field"><span>Duration</span><input v-model.number="directForm.durationSec" type="number" min="1" step="0.1" /></label>
           <label class="field"><span>Width</span><input v-model.number="directForm.width" type="number" min="64" step="1" /></label>
           <label class="field"><span>Height</span><input v-model.number="directForm.height" type="number" min="64" step="1" /></label>
+        </div>
+        <div class="field-grid">
+          <label class="field"><span>Inference Steps</span><input v-model.number="directForm.numInferenceSteps" type="number" min="1" step="1" /></label>
+          <label class="field"><span>Seed</span><input v-model.number="directForm.seed" type="number" min="0" step="1" /></label>
         </div>
         <button class="cta cta--ink" :disabled="busy" @click="startDirectJob">Запустить direct job</button>
       </article>

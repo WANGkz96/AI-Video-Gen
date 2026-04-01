@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 import zipfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -9,14 +10,17 @@ from pathlib import Path
 from typing import Any
 
 from backend.app.adapters.base import AdapterUnavailableError, BaseGeneratorAdapter
+from backend.app.adapters.catalog import get_diffusers_backend_specs
 from backend.app.adapters.comfyui import ComfyUiWorkflowAdapter
+from backend.app.adapters.diffusers_video import DiffusersVideoAdapter
 from backend.app.adapters.mock_gen import MockGenAdapter
 from backend.app.adapters.planned import PlannedAdapter
-from backend.app.config import Settings
+from backend.app.config import REPO_ROOT, Settings
 from backend.app.models import (
     AdapterInfo,
     BatchExport,
     DirectGenerationRequest,
+    GenerationArtifact,
     JobQueuedResponse,
     JobSnapshot,
     LogEntry,
@@ -76,11 +80,16 @@ class JobService:
         self._worker_task = None
 
     def health(self) -> dict[str, Any]:
+        active_jobs = sum(
+            1
+            for runtime in self._jobs.values()
+            if runtime.snapshot.status in {"queued", "running"}
+        )
         return {
             "status": "ok",
             "defaultBackend": self._settings.generator_backend,
             "queuedJobs": self._queue.qsize(),
-            "activeJobs": len(self._jobs),
+            "activeJobs": active_jobs,
             "frontendBuilt": self._settings.frontend_dist_dir.exists(),
         }
 
@@ -195,17 +204,38 @@ class JobService:
                 runtime.subscribers.remove(queue)
 
     def _build_registry(self) -> dict[str, BaseGeneratorAdapter]:
-        return {
+        registry: dict[str, BaseGeneratorAdapter] = {
             "mock-gen": MockGenAdapter(self._settings.mock_media_dir),
             "comfyui-workflow": ComfyUiWorkflowAdapter(self._settings.generator_api_url),
-            "ltx-video-2": PlannedAdapter("ltx-video-2", "LTX Video 2", "Reserved adapter slot."),
-            "ltx-video-2-distilled": PlannedAdapter(
-                "ltx-video-2-distilled", "LTX Video 2 Distilled", "Reserved adapter slot."
-            ),
-            "hunyuan-video": PlannedAdapter("hunyuan-video", "Hunyuan Video", "Reserved adapter slot."),
-            "wan-2.1": PlannedAdapter("wan-2.1", "Wan 2.1", "Reserved adapter slot."),
-            "cogvideox": PlannedAdapter("cogvideox", "CogVideoX", "Reserved adapter slot."),
         }
+        for spec in get_diffusers_backend_specs().values():
+            registry[spec.key] = DiffusersVideoAdapter(self._settings, spec)
+        registry["ltx-video-2"] = PlannedAdapter(
+            "ltx-video-2",
+            "LTX Video 2",
+            "Use 'ltx-2-distilled' instead.",
+        )
+        registry["ltx-video-2-distilled"] = PlannedAdapter(
+            "ltx-video-2-distilled",
+            "LTX Video 2 Distilled",
+            "Use 'ltx-2-distilled' instead.",
+        )
+        registry["hunyuan-video"] = PlannedAdapter(
+            "hunyuan-video",
+            "Hunyuan Video",
+            "Use 'hunyuan-video-1.5' instead.",
+        )
+        registry["wan-2.1"] = PlannedAdapter(
+            "wan-2.1",
+            "Wan 2.1",
+            "Use 'wan2.2-ti2v-5b' instead.",
+        )
+        registry["cogvideox"] = PlannedAdapter(
+            "cogvideox",
+            "CogVideoX",
+            "Use 'cogvideox-5b' instead.",
+        )
+        return registry
 
     def _ensure_backend_can_run(self, backend: str) -> None:
         if backend not in self._adapters:
@@ -229,6 +259,7 @@ class JobService:
             job_id = await self._queue.get()
             runtime = self._runtime(job_id)
             try:
+                self._release_adapters(except_backend=runtime.snapshot.backend)
                 await self._process_job(runtime)
             except Exception as exc:
                 runtime.snapshot.status = "failed"
@@ -239,6 +270,7 @@ class JobService:
                 await self._broadcast_snapshot(runtime)
                 await self._log(runtime, "error", f"Job failed: {exc}")
             finally:
+                self._release_adapters()
                 self._queue.task_done()
 
     async def _process_job(self, runtime: JobRuntime) -> None:
@@ -331,7 +363,7 @@ class JobService:
                 f"[{video.videoId}/{variant.key}] Segment {segment.segmentIndex} -> {segment.segmentId}",
             )
             try:
-                artifact = await adapter.generate_segment(request)
+                artifact = await self._generate_segment(adapter, request)
                 probed = probe_video(
                     artifact.outputPath,
                     fallback_width=request.width,
@@ -388,6 +420,59 @@ class JobService:
                 self._write_snapshot(runtime)
                 await self._broadcast_snapshot(runtime)
                 await self._log(runtime, "error", f"Segment {segment.segmentId} failed: {exc}")
+
+    async def _generate_segment(
+        self,
+        adapter: BaseGeneratorAdapter,
+        request: SegmentGenerationRequest,
+    ) -> GenerationArtifact:
+        if isinstance(adapter, DiffusersVideoAdapter):
+            return await self._generate_segment_in_subprocess(request)
+        return await adapter.generate_segment(request)
+
+    async def _generate_segment_in_subprocess(
+        self,
+        request: SegmentGenerationRequest,
+    ) -> GenerationArtifact:
+        request_path = request.outputPath.with_suffix(".request.json")
+        artifact_path = request.outputPath.with_suffix(".artifact.json")
+        request_path.parent.mkdir(parents=True, exist_ok=True)
+        request_path.write_text(
+            json.dumps(request.model_dump(mode="json"), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-m",
+            "backend.app.cli",
+            "run-segment",
+            "--backend",
+            request.backend,
+            "--request-file",
+            request_path.as_posix(),
+            "--artifact-file",
+            artifact_path.as_posix(),
+            cwd=REPO_ROOT.as_posix(),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await process.communicate()
+        if process.returncode != 0:
+            raise RuntimeError(
+                "\n".join(
+                    item
+                    for item in [
+                        f"Generator subprocess failed with exit code {process.returncode}.",
+                        stdout.decode("utf-8", errors="ignore").strip(),
+                        stderr.decode("utf-8", errors="ignore").strip(),
+                    ]
+                    if item
+                )
+            )
+        if not artifact_path.is_file():
+            raise FileNotFoundError(f"Missing artifact JSON from generator subprocess: {artifact_path.name}")
+        return GenerationArtifact.model_validate_json(artifact_path.read_text(encoding="utf-8"))
 
     def _build_segment_metadata(
         self,
@@ -723,3 +808,12 @@ class JobService:
                 }
             ],
         }
+
+    def _release_adapters(self, except_backend: str | None = None) -> None:
+        for key, adapter in self._adapters.items():
+            if except_backend is not None and key == except_backend:
+                continue
+            try:
+                adapter.release()
+            except Exception:
+                continue

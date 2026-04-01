@@ -3,10 +3,11 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
+.run/
 node_modules/
 frontend/dist/
 frontend/node_modules/
 data/
 mock-media/
+models/
 .env
-

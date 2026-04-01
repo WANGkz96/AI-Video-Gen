@@ -24,3 +24,5 @@ class BaseGeneratorAdapter(ABC):
     ) -> GenerationArtifact:
         raise NotImplementedError
 
+    def release(self) -> None:
+        return None
