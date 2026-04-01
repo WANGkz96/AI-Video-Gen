@@ -103,10 +103,18 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
             )
         elif not self._gemma_ready():
             available = False
-            notes = (
-                f"Gemma assets are not downloaded yet. Expected path: {gemma_root.as_posix()}. "
-                "Run the bootstrap/download script or the model download CLI."
-            )
+            if not self._settings.hf_token:
+                notes = (
+                    "Gemma 3 assets are not downloaded yet and the official repository is gated on Hugging Face. "
+                    "Set HF_TOKEN with approved access to "
+                    f"'{self._spec.gemma_model_id}', then rerun bootstrap/download. "
+                    f"Expected path: {gemma_root.as_posix()}."
+                )
+            else:
+                notes = (
+                    f"Gemma assets are not downloaded yet. Expected path: {gemma_root.as_posix()}. "
+                    "Run the bootstrap/download script or the model download CLI."
+                )
 
         return AdapterInfo(
             key=self._spec.key,
@@ -202,6 +210,7 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
     def _download_assets(self) -> Path:
         try:
             from huggingface_hub import hf_hub_download, snapshot_download
+            from huggingface_hub.errors import GatedRepoError, HfHubHTTPError
         except Exception as exc:
             raise AdapterUnavailableError(f"Cannot download model assets: {exc}") from exc
 
@@ -227,11 +236,25 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
 
         gemma_root = self._gemma_root()
         if not self._gemma_ready():
-            snapshot_download(
-                repo_id=self._spec.gemma_model_id,
-                local_dir=gemma_root,
-                token=self._settings.hf_token,
-            )
+            try:
+                snapshot_download(
+                    repo_id=self._spec.gemma_model_id,
+                    local_dir=gemma_root,
+                    token=self._settings.hf_token,
+                )
+            except GatedRepoError as exc:
+                raise AdapterUnavailableError(
+                    "Gemma 3 access is gated on Hugging Face. "
+                    f"Approve access to '{self._spec.gemma_model_id}' and set HF_TOKEN before downloading LTX 2.3 assets."
+                ) from exc
+            except HfHubHTTPError as exc:
+                status = getattr(exc.response, "status_code", None)
+                if status in {401, 403}:
+                    raise AdapterUnavailableError(
+                        "Gemma 3 download was denied by Hugging Face. "
+                        f"Approve access to '{self._spec.gemma_model_id}' and set HF_TOKEN before downloading LTX 2.3 assets."
+                    ) from exc
+                raise
 
         self._prepare_runtime()
         return checkpoint_dir

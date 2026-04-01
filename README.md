@@ -62,6 +62,7 @@ npm run dev
   - скачивает Gemma 3 assets в `models/gemma-3-12b-it-qat-q4_0-unquantized/`;
   - клонирует pinned revision официального `LTX-2` runtime в `data/runtime/ltx-2-official/`;
   - устанавливает `ltx-core` и `ltx-pipelines` в текущее виртуальное окружение.
+- Для `ltx-2.3` нужен `HF_TOKEN` с одобренным доступом к gated repo `google/gemma-3-12b-it-qat-q4_0-unquantized`.
 
 Для полного Vast deploy:
 
