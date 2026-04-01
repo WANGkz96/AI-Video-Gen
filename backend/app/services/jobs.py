@@ -10,11 +10,11 @@ from pathlib import Path
 from typing import Any
 
 from backend.app.adapters.base import AdapterUnavailableError, BaseGeneratorAdapter
-from backend.app.adapters.catalog import get_diffusers_backend_specs
 from backend.app.adapters.comfyui import ComfyUiWorkflowAdapter
 from backend.app.adapters.diffusers_video import DiffusersVideoAdapter
 from backend.app.adapters.mock_gen import MockGenAdapter
 from backend.app.adapters.planned import PlannedAdapter
+from backend.app.adapters.registry import build_real_model_registry
 from backend.app.config import REPO_ROOT, Settings
 from backend.app.models import (
     AdapterInfo,
@@ -208,8 +208,7 @@ class JobService:
             "mock-gen": MockGenAdapter(self._settings.mock_media_dir),
             "comfyui-workflow": ComfyUiWorkflowAdapter(self._settings.generator_api_url),
         }
-        for spec in get_diffusers_backend_specs().values():
-            registry[spec.key] = DiffusersVideoAdapter(self._settings, spec)
+        registry.update(build_real_model_registry(self._settings))
         registry["ltx-video-2"] = PlannedAdapter(
             "ltx-video-2",
             "LTX Video 2",

@@ -5,8 +5,8 @@ import asyncio
 import json
 from pathlib import Path
 
-from backend.app.adapters.catalog import get_diffusers_backend_specs
-from backend.app.adapters.diffusers_video import DiffusersVideoAdapter
+from backend.app.adapters.base import AdapterUnavailableError, BaseGeneratorAdapter
+from backend.app.adapters.registry import build_real_model_registry, get_downloadable_backend_keys
 from backend.app.config import Settings
 from backend.app.models import SegmentGenerationRequest
 from backend.app.services.jobs import compact_timestamp
@@ -39,22 +39,27 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def parse_model_selection(raw: str) -> list[str]:
-    specs = get_diffusers_backend_specs()
     if raw == "all":
-        return list(specs)
+        return get_downloadable_backend_keys()
     keys = [item.strip() for item in raw.split(",") if item.strip()]
-    unknown = [key for key in keys if key not in specs]
+    known = set(get_downloadable_backend_keys())
+    unknown = [key for key in keys if key not in known]
     if unknown:
         raise SystemExit(f"Unknown model keys: {', '.join(unknown)}")
     return keys
 
 
+def build_real_model_adapter(settings: Settings, backend: str) -> BaseGeneratorAdapter:
+    registry = build_real_model_registry(settings)
+    try:
+        return registry[backend]
+    except KeyError as exc:
+        raise SystemExit(f"Unknown backend '{backend}'.") from exc
+
+
 async def run_smoke_test(args: argparse.Namespace) -> None:
     settings = Settings.from_env()
-    specs = get_diffusers_backend_specs()
-    if args.backend not in specs:
-        raise SystemExit(f"Unknown backend '{args.backend}'.")
-    adapter = DiffusersVideoAdapter(settings, specs[args.backend])
+    adapter = build_real_model_adapter(settings, args.backend)
     smoke_dir = settings.temp_dir / "smoke-tests"
     smoke_dir.mkdir(parents=True, exist_ok=True)
     output_path = smoke_dir / f"{args.backend}_{compact_timestamp()}.mp4"
@@ -94,10 +99,7 @@ async def run_smoke_test(args: argparse.Namespace) -> None:
 
 async def run_serialized_segment(args: argparse.Namespace) -> None:
     settings = Settings.from_env()
-    specs = get_diffusers_backend_specs()
-    if args.backend not in specs:
-        raise SystemExit(f"Unknown backend '{args.backend}'.")
-    adapter = DiffusersVideoAdapter(settings, specs[args.backend])
+    adapter = build_real_model_adapter(settings, args.backend)
     request = SegmentGenerationRequest.model_validate_json(
         Path(args.request_file).read_text(encoding="utf-8")
     )
@@ -112,17 +114,22 @@ def run_downloads(args: argparse.Namespace) -> None:
     settings = Settings.from_env()
     selected = parse_model_selection(args.models)
     for key in selected:
-        adapter = DiffusersVideoAdapter(settings, get_diffusers_backend_specs()[key])
+        adapter = build_real_model_adapter(settings, key)
         info = adapter.info()
         print(f"[{key}] {info.modelId} -> {info.localPath}")
-        asyncio.run(adapter.download_assets())
+        if not hasattr(adapter, "download_assets"):
+            raise SystemExit(f"Backend '{key}' does not support asset downloads.")
+        try:
+            asyncio.run(adapter.download_assets())  # type: ignore[attr-defined]
+        except AdapterUnavailableError as exc:
+            raise SystemExit(str(exc)) from exc
         print(f"[{key}] ready")
 
 
 def list_models() -> None:
     settings = Settings.from_env()
-    for key, spec in get_diffusers_backend_specs().items():
-        info = DiffusersVideoAdapter(settings, spec).info()
+    for key, adapter in build_real_model_registry(settings).items():
+        info = adapter.info()
         print(
             json.dumps(
                 {
