@@ -10,7 +10,7 @@ mkdir -p "${ROOT_DIR}/.run"
 pkill -f "uvicorn backend.app.main:app .* --port ${PORT}" || true
 
 nohup env PORT="${PORT}" GENERATOR_BACKEND="${BACKEND}" CORS_ORIGINS="${CORS}" \
-  "${ROOT_DIR}/scripts/start_vast.sh" \
+  bash "${ROOT_DIR}/scripts/start_vast.sh" \
   > "${ROOT_DIR}/.run/backend.out.log" \
   2> "${ROOT_DIR}/.run/backend.err.log" \
   < /dev/null &

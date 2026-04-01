@@ -28,4 +28,4 @@ PORT="${PORT}" \
 MODELS="${MODELS}" \
 GENERATOR_BACKEND="${GENERATOR_BACKEND}" \
 CORS_ORIGINS="${CORS_ORIGINS}" \
-./scripts/deploy_vast.sh
+bash ./scripts/deploy_vast.sh

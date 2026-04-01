@@ -72,6 +72,12 @@ cd AI-Video-Gen
 PORT=8090 MODELS=all ./scripts/deploy_vast.sh
 ```
 
+Если shell-скрипты после clone не получили executable bit, запускай через `bash`:
+
+```bash
+PORT=8090 MODELS=all bash ./scripts/deploy_vast.sh
+```
+
 Для автозапуска через Vast template, `PROVISIONING_SCRIPT` и кнопки во `Instance Portal` см. [`docs/vast-template.md`](./docs/vast-template.md).
 
 ## ComfyUI Foundation
