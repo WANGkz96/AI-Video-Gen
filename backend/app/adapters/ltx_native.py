@@ -318,6 +318,11 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
     def _patch_runtime_sources(self, repo_dir: Path) -> None:
         self._patch_gemma_transformers_compat(repo_dir)
         self._patch_ti2vid_one_stage_dtype(repo_dir)
+        self._clear_runtime_bytecode(repo_dir)
+
+    def _clear_runtime_bytecode(self, repo_dir: Path) -> None:
+        for cache_dir in repo_dir.rglob("__pycache__"):
+            shutil.rmtree(cache_dir, ignore_errors=True)
 
     def _patch_gemma_transformers_compat(self, repo_dir: Path) -> None:
         target = (
