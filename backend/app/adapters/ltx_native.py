@@ -173,6 +173,7 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
 
     async def generate_segment(self, request: SegmentGenerationRequest) -> GenerationArtifact:
         await asyncio.to_thread(self._prepare_runtime)
+        request.outputPath.parent.mkdir(parents=True, exist_ok=True)
         command, env, debug = self._build_command(request)
         process = await asyncio.create_subprocess_exec(
             *command,
