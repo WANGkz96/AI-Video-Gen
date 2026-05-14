@@ -539,13 +539,8 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
             command.extend(["--spatial-upsampler-path", self._spatial_upsampler_path().as_posix()])
         if self._spec.allow_negative_prompt and negative_prompt:
             command.extend(["--negative-prompt", negative_prompt])
-        image_arg_name = str(
-            backend_params.get("image_arg_name")
-            or backend_params.get("input_image_arg_name")
-            or os.environ.get("LTX_INPUT_IMAGE_ARG_NAME", "")
-        ).strip()
-        if request.imagePath and image_arg_name:
-            command.extend([image_arg_name, request.imagePath.as_posix()])
+        image_args, image_debug = self._resolve_image_conditioning_args(request, backend_params)
+        command.extend(image_args)
         if "quantization" in backend_params:
             command.extend(["--quantization", str(backend_params["quantization"])])
         offload = str(backend_params.get("offload") or self._settings.ltx_offload or "").strip()
@@ -606,11 +601,85 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
                 "max_batch_size": backend_params.get("max_batch_size"),
                 "offload": offload or None,
                 "image_path": request.imagePath.as_posix() if request.imagePath else None,
-                "image_arg_name": image_arg_name or None,
+                "image_conditioning": image_debug,
             },
             "command": command,
         }
         return command, env, debug
+
+    def _resolve_image_conditioning_args(
+        self,
+        request: SegmentGenerationRequest,
+        backend_params: dict[str, object],
+    ) -> tuple[list[str], dict[str, object] | None]:
+        if not request.imagePath:
+            return [], None
+
+        raw_arg_name = str(
+            backend_params.get("image_arg_name")
+            or backend_params.get("input_image_arg_name")
+            or os.environ.get("LTX_INPUT_IMAGE_ARG_NAME", "")
+        ).strip()
+        if raw_arg_name.lower() in {"0", "off", "none", "false", "disabled"}:
+            return [], {
+                "enabled": False,
+                "reason": "disabled",
+                "imagePath": request.imagePath.as_posix(),
+            }
+
+        image_arg_name = raw_arg_name
+        if not image_arg_name and self._spec.pipeline_module == "ltx_pipelines.distilled":
+            image_arg_name = "--image"
+        if not image_arg_name:
+            return [], {
+                "enabled": False,
+                "reason": "no_input_image_arg_name",
+                "imagePath": request.imagePath.as_posix(),
+            }
+
+        image_path = request.imagePath.as_posix()
+        if image_arg_name == "--image":
+            frame_index = int(
+                backend_params.get("image_frame_index")
+                or backend_params.get("imageFrameIndex")
+                or os.environ.get("LTX_IMAGE_FRAME_INDEX", 0)
+            )
+            strength = float(
+                backend_params.get("image_strength")
+                or backend_params.get("imageStrength")
+                or os.environ.get("LTX_IMAGE_STRENGTH", 0.85)
+            )
+            crf_value = (
+                backend_params.get("image_crf")
+                or backend_params.get("imageCrf")
+                or os.environ.get("LTX_IMAGE_CRF")
+            )
+            args = [
+                image_arg_name,
+                image_path,
+                str(frame_index),
+                f"{strength:g}",
+            ]
+            crf = None
+            if crf_value not in {None, ""}:
+                crf = int(crf_value)
+                args.append(str(crf))
+            return args, {
+                "enabled": True,
+                "imagePath": image_path,
+                "imageArgName": image_arg_name,
+                "format": "--image PATH FRAME_IDX STRENGTH [CRF]",
+                "frameIndex": frame_index,
+                "strength": strength,
+                "crf": crf,
+            }
+
+        return [image_arg_name, image_path], {
+            "enabled": True,
+            "imagePath": image_path,
+            "imageArgName": image_arg_name,
+            "format": "ARG PATH",
+        }
 
     def _resolve_output_upscale(self, backend_params: dict[str, object]) -> float | None:
         raw_value = (

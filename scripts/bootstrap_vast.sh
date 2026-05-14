@@ -93,6 +93,10 @@ write_runtime_env() {
   write_env_value "LANDSCAPE_RESOLUTION" "${LANDSCAPE_RESOLUTION:-1280x720}"
   write_env_value "OUTPUT_UPSCALE" "${OUTPUT_UPSCALE:-off}"
   write_env_value "LTX_OFFLOAD" "${LTX_OFFLOAD:-none}"
+  write_env_value "LTX_INPUT_IMAGE_ARG_NAME" "${LTX_INPUT_IMAGE_ARG_NAME:-}"
+  write_env_value "LTX_IMAGE_FRAME_INDEX" "${LTX_IMAGE_FRAME_INDEX:-0}"
+  write_env_value "LTX_IMAGE_STRENGTH" "${LTX_IMAGE_STRENGTH:-0.85}"
+  write_env_value "LTX_IMAGE_CRF" "${LTX_IMAGE_CRF:-}"
   if [ -n "${HF_TOKEN:-}" ]; then
     write_env_value "HF_TOKEN" "${HF_TOKEN}"
   fi
