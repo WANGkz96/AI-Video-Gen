@@ -11,3 +11,4 @@ data/
 mock-media/
 models/
 .env
+*.egg-info/
