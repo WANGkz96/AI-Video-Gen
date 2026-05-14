@@ -34,6 +34,8 @@ PORT=8090
 MODELS=ltx-2.3-distilled
 GENERATOR_BACKEND=ltx-2.3-distilled
 AI_VIDEO_GEN_FORCE_LTX23_DISTILLED=1
+OUTPUT_UPSCALE=off
+LTX_OFFLOAD=none
 PORTAL_CONFIG=localhost:1111:11111:/:Instance Portal|localhost:8080:18080:/:Jupyter|localhost:8080:8080:/terminals/1:Jupyter Terminal|localhost:8384:18384:/:Syncthing|localhost:6006:16006:/:Tensorboard|localhost:8090:8090:/:AI Video Gen
 ```
 
@@ -50,7 +52,7 @@ OPEN_BUTTON_PORT=8090
 Вариант с открытием `Instance Portal` верхней кнопкой и отдельной карточкой `AI Video Gen` внутри portal:
 
 ```bash
-vastai create instance <OFFER_ID> --image vastai/base-image:@vastai-automatic-tag --env '-p 1111:1111 -p 6006:6006 -p 8080:8080 -p 8384:8384 -p 72299:72299 -p 8090:8090 -e OPEN_BUTTON_PORT="1111" -e OPEN_BUTTON_TOKEN="1" -e JUPYTER_DIR="/" -e DATA_DIRECTORY="/workspace/" -e PORTAL_CONFIG="localhost:1111:11111:/:Instance Portal|localhost:8080:18080:/:Jupyter|localhost:8080:8080:/terminals/1:Jupyter Terminal|localhost:8384:18384:/:Syncthing|localhost:6006:16006:/:Tensorboard|localhost:8090:8090:/:AI Video Gen" -e PORT="8090" -e MODELS="ltx-2.3-distilled" -e GENERATOR_BACKEND="ltx-2.3-distilled" -e AI_VIDEO_GEN_FORCE_LTX23_DISTILLED="1" -e PROVISIONING_SCRIPT="https://raw.githubusercontent.com/WANGkz96/AI-Video-Gen/master/scripts/onstart_vast_instance.sh"' --onstart-cmd 'entrypoint.sh' --disk 400 --jupyter --ssh --direct
+vastai create instance <OFFER_ID> --image vastai/base-image:@vastai-automatic-tag --env '-p 1111:1111 -p 6006:6006 -p 8080:8080 -p 8384:8384 -p 72299:72299 -p 8090:8090 -e OPEN_BUTTON_PORT="1111" -e OPEN_BUTTON_TOKEN="1" -e JUPYTER_DIR="/" -e DATA_DIRECTORY="/workspace/" -e PORTAL_CONFIG="localhost:1111:11111:/:Instance Portal|localhost:8080:18080:/:Jupyter|localhost:8080:8080:/terminals/1:Jupyter Terminal|localhost:8384:18384:/:Syncthing|localhost:6006:16006:/:Tensorboard|localhost:8090:8090:/:AI Video Gen" -e PORT="8090" -e MODELS="ltx-2.3-distilled" -e GENERATOR_BACKEND="ltx-2.3-distilled" -e AI_VIDEO_GEN_FORCE_LTX23_DISTILLED="1" -e OUTPUT_UPSCALE="off" -e LTX_OFFLOAD="none" -e PROVISIONING_SCRIPT="https://raw.githubusercontent.com/WANGkz96/AI-Video-Gen/master/scripts/onstart_vast_instance.sh"' --onstart-cmd 'entrypoint.sh' --disk 400 --jupyter --ssh --direct
 ```
 
 Если хочешь, чтобы верхняя кнопка `Open` вела сразу во фронт сервиса, замени `OPEN_BUTTON_PORT="1111"` на `OPEN_BUTTON_PORT="8090"`.
@@ -123,6 +125,24 @@ GENERATOR_BACKEND=ltx-2.3-distilled
 - `ltx-2.3-22b-distilled-1.1.safetensors`
 - `ltx-2.3-spatial-upscaler-x2-1.1.safetensors`
 - Gemma 3 text encoder assets
+
+`ltx_pipelines.distilled` всегда требует `--spatial-upsampler-path`: это внутренняя часть
+двухстадийной distilled-генерации, а не отдельный постпроцесс. Дополнительный внешний
+post-upscale итогового mp4 управляется отдельно:
+
+```text
+OUTPUT_UPSCALE=off
+```
+
+Допустимые значения: `off`, `1.5x`, `2x`. По умолчанию `off`.
+
+Для GPU с VRAM меньше 90GB можно включить CPU offload:
+
+```text
+LTX_OFFLOAD=cpu
+```
+
+Для RTX PRO 6000 96GB оставляй `LTX_OFFLOAD=none`.
 
 Если нужен dev checkpoint вместо distilled, используй `MODELS=ltx-2.3` и `GENERATOR_BACKEND=ltx-2.3`, но он медленнее и в этом проекте остаётся скорее вариантом для проверки качества.
 

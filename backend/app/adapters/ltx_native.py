@@ -30,6 +30,7 @@ class LtxNativeBackendSpec:
     checkpoint_arg_name: str = "--checkpoint-path"
     spatial_upsampler_filename: str | None = None
     allow_negative_prompt: bool = True
+    allow_num_inference_steps: bool = True
     status: Literal["ready", "planned", "experimental"] = "experimental"
     minimum_vram_gb: int = 32
     default_width: int = 768
@@ -84,6 +85,7 @@ def get_ltx_native_backend_specs() -> dict[str, LtxNativeBackendSpec]:
             checkpoint_arg_name="--distilled-checkpoint-path",
             spatial_upsampler_filename="ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
             allow_negative_prompt=False,
+            allow_num_inference_steps=False,
             status="experimental",
             minimum_vram_gb=32,
             default_width=768,
@@ -203,6 +205,27 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
 
         debug["stdout"] = stdout_text
         debug["stderr"] = stderr_text
+        generation_args = debug.get("generationArgs", {})
+        if isinstance(generation_args, dict):
+            requested_width = int(generation_args.get("requested_width") or 0)
+            requested_height = int(generation_args.get("requested_height") or 0)
+            generated_width = int(generation_args.get("width") or 0)
+            generated_height = int(generation_args.get("height") or 0)
+            if (
+                requested_width > 0
+                and requested_height > 0
+                and (requested_width != generated_width or requested_height != generated_height)
+            ):
+                await asyncio.to_thread(
+                    self._resize_output,
+                    request.outputPath,
+                    requested_width,
+                    requested_height,
+                    debug,
+                )
+        output_upscale = self._resolve_output_upscale(request.backendParams)
+        if output_upscale:
+            await asyncio.to_thread(self._post_upscale_output, request.outputPath, output_upscale, debug)
         return GenerationArtifact(
             modelName=self._spec.key,
             modelVersion=self._spec.model_id,
@@ -476,12 +499,10 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
         self, request: SegmentGenerationRequest
     ) -> tuple[list[str], dict[str, str], dict[str, object]]:
         backend_params = dict(request.backendParams or {})
-        width = self._normalize_dimension(
-            int(backend_params.get("width", request.width or self._spec.default_width))
-        )
-        height = self._normalize_dimension(
-            int(backend_params.get("height", request.height or self._spec.default_height))
-        )
+        requested_width = int(backend_params.get("width", request.width or self._spec.default_width))
+        requested_height = int(backend_params.get("height", request.height or self._spec.default_height))
+        width = self._normalize_dimension(requested_width)
+        height = self._normalize_dimension(requested_height)
         fps = float(backend_params.get("fps", request.fps or self._spec.default_fps))
         num_frames = self._resolve_num_frames(request, fps, backend_params)
         steps = int(backend_params.get("num_inference_steps", self._spec.default_steps))
@@ -510,10 +531,10 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
             str(num_frames),
             "--frame-rate",
             str(fps),
-            "--num-inference-steps",
-            str(steps),
         ]
 
+        if self._spec.allow_num_inference_steps:
+            command.extend(["--num-inference-steps", str(steps)])
         if self._spec.spatial_upsampler_filename:
             command.extend(["--spatial-upsampler-path", self._spatial_upsampler_path().as_posix()])
         if self._spec.allow_negative_prompt and negative_prompt:
@@ -527,8 +548,9 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
             command.extend([image_arg_name, request.imagePath.as_posix()])
         if "quantization" in backend_params:
             command.extend(["--quantization", str(backend_params["quantization"])])
-        if "offload" in backend_params:
-            command.extend(["--offload", str(backend_params["offload"])])
+        offload = str(backend_params.get("offload") or self._settings.ltx_offload or "").strip()
+        if offload:
+            command.extend(["--offload", offload])
         if "streaming_prefetch_count" in backend_params:
             command.extend(
                 ["--streaming-prefetch-count", str(int(backend_params["streaming_prefetch_count"]))]
@@ -572,19 +594,179 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
                     else "<ignored-by-distilled-pipeline>"
                 ),
                 "seed": seed,
+                "requested_width": requested_width,
+                "requested_height": requested_height,
                 "height": height,
                 "width": width,
                 "num_frames": num_frames,
                 "frame_rate": fps,
-                "num_inference_steps": steps,
+                "num_inference_steps": steps if self._spec.allow_num_inference_steps else None,
+                "fixed_distilled_schedule": not self._spec.allow_num_inference_steps,
                 "streaming_prefetch_count": backend_params.get("streaming_prefetch_count"),
                 "max_batch_size": backend_params.get("max_batch_size"),
+                "offload": offload or None,
                 "image_path": request.imagePath.as_posix() if request.imagePath else None,
                 "image_arg_name": image_arg_name or None,
             },
             "command": command,
         }
         return command, env, debug
+
+    def _resolve_output_upscale(self, backend_params: dict[str, object]) -> float | None:
+        raw_value = (
+            backend_params.get("output_upscale")
+            or backend_params.get("outputUpscale")
+            or backend_params.get("post_upscale")
+            or backend_params.get("postUpscale")
+        )
+        if raw_value is None:
+            return self._settings.output_upscale
+        text = str(raw_value).strip().lower()
+        if text in {"", "0", "off", "none", "false", "disabled"}:
+            return None
+        if text.endswith("x"):
+            text = text[:-1].strip()
+        try:
+            scale = float(text)
+        except ValueError:
+            return None
+        if scale in {1.5, 2.0}:
+            return scale
+        return None
+
+    def _post_upscale_output(
+        self,
+        output_path: Path,
+        scale: float,
+        debug: dict[str, object],
+    ) -> None:
+        ffmpeg = self._find_ffmpeg()
+        tmp_path = output_path.with_name(f"{output_path.stem}.upscaled.tmp{output_path.suffix}")
+        scale_filter = (
+            f"scale=ceil(iw*{scale}/2)*2:ceil(ih*{scale}/2)*2:"
+            "flags=lanczos"
+        )
+        command = [
+            ffmpeg,
+            "-y",
+            "-i",
+            output_path.as_posix(),
+            "-vf",
+            scale_filter,
+            "-c:v",
+            "libx264",
+            "-preset",
+            "medium",
+            "-crf",
+            "18",
+            "-c:a",
+            "copy",
+            "-movflags",
+            "+faststart",
+            tmp_path.as_posix(),
+        ]
+        completed = subprocess.run(
+            command,
+            cwd=REPO_ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            if tmp_path.exists():
+                tmp_path.unlink()
+            raise RuntimeError(
+                "\n".join(
+                    item
+                    for item in [
+                        f"Post-upscale failed for {output_path.name} at {scale}x.",
+                        completed.stdout.strip(),
+                        completed.stderr.strip(),
+                    ]
+                    if item
+                )
+            )
+        tmp_path.replace(output_path)
+        debug["outputUpscale"] = {
+            "scale": scale,
+            "ffmpeg": ffmpeg,
+            "filter": scale_filter,
+            "stdout": completed.stdout.strip(),
+            "stderr": completed.stderr.strip(),
+        }
+
+    def _resize_output(
+        self,
+        output_path: Path,
+        width: int,
+        height: int,
+        debug: dict[str, object],
+    ) -> None:
+        ffmpeg = self._find_ffmpeg()
+        tmp_path = output_path.with_name(f"{output_path.stem}.resized.tmp{output_path.suffix}")
+        scale_filter = f"scale={width}:{height}:flags=lanczos"
+        command = [
+            ffmpeg,
+            "-y",
+            "-i",
+            output_path.as_posix(),
+            "-vf",
+            scale_filter,
+            "-c:v",
+            "libx264",
+            "-preset",
+            "medium",
+            "-crf",
+            "18",
+            "-c:a",
+            "copy",
+            "-movflags",
+            "+faststart",
+            tmp_path.as_posix(),
+        ]
+        completed = subprocess.run(
+            command,
+            cwd=REPO_ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            if tmp_path.exists():
+                tmp_path.unlink()
+            raise RuntimeError(
+                "\n".join(
+                    item
+                    for item in [
+                        f"Output resize failed for {output_path.name} to {width}x{height}.",
+                        completed.stdout.strip(),
+                        completed.stderr.strip(),
+                    ]
+                    if item
+                )
+            )
+        tmp_path.replace(output_path)
+        debug["outputResize"] = {
+            "width": width,
+            "height": height,
+            "ffmpeg": ffmpeg,
+            "filter": scale_filter,
+            "stdout": completed.stdout.strip(),
+            "stderr": completed.stderr.strip(),
+        }
+
+    def _find_ffmpeg(self) -> str:
+        ffmpeg = shutil.which("ffmpeg")
+        if ffmpeg:
+            return ffmpeg
+        try:
+            import imageio_ffmpeg
+
+            return str(imageio_ffmpeg.get_ffmpeg_exe())
+        except Exception as exc:  # pragma: no cover - depends on optional runtime package.
+            raise RuntimeError(
+                "OUTPUT_UPSCALE requires ffmpeg or imageio-ffmpeg, but neither is available."
+            ) from exc
 
     def _resolve_num_frames(
         self,

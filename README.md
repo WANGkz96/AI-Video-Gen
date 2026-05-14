@@ -64,6 +64,8 @@ npm run dev
   - клонирует pinned revision официального `LTX-2` runtime в `data/runtime/ltx-2-official/`;
   - устанавливает `ltx-core` и `ltx-pipelines` в текущее виртуальное окружение.
 - Для `ltx-2.3`/`ltx-2.3-distilled` нужен `HF_TOKEN` с одобренным доступом к gated repo `google/gemma-3-12b-it-qat-q4_0-unquantized`.
+- `ltx-2.3-distilled` всегда использует внутренний LTX spatial upsampler, потому что официальный distilled pipeline двухстадийный. Дополнительный внешний post-upscale итогового mp4 задаётся через `OUTPUT_UPSCALE=off|1.5x|2x`; по умолчанию `off`.
+- Для GPU с VRAM меньше 90 GB можно выставить `LTX_OFFLOAD=cpu`; для RTX PRO 6000 96GB оставляй `LTX_OFFLOAD=none`.
 
 Для полного Vast deploy:
 

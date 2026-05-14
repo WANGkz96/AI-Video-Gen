@@ -47,6 +47,30 @@ def _parse_resolution(value: str, fallback: tuple[int, int]) -> tuple[int, int]:
     return width, height
 
 
+def _parse_output_upscale(value: str | None) -> float | None:
+    text = str(value or "").strip().lower()
+    if text in {"", "0", "off", "none", "false", "disabled"}:
+        return None
+    if text.endswith("x"):
+        text = text[:-1].strip()
+    try:
+        scale = float(text)
+    except ValueError:
+        return None
+    if scale in {1.5, 2.0}:
+        return scale
+    return None
+
+
+def _parse_ltx_offload(value: str | None) -> str | None:
+    text = str(value or "").strip().lower()
+    if text in {"", "0", "none", "off", "false", "disabled"}:
+        return None
+    if text in {"cpu", "disk"}:
+        return text
+    return None
+
+
 @dataclass(slots=True)
 class Settings:
     port: int
@@ -63,6 +87,8 @@ class Settings:
     video_duration_sec: float
     portrait_resolution: tuple[int, int]
     landscape_resolution: tuple[int, int]
+    output_upscale: float | None
+    ltx_offload: str | None
     mock_media_dir: Path
     hf_token: str | None
     cors_origins: list[str]
@@ -99,6 +125,10 @@ class Settings:
             video_duration_sec=max(1.0, float(os.getenv("VIDEO_DURATION_SEC", "8"))),
             portrait_resolution=_parse_resolution(os.getenv("PORTRAIT_RESOLUTION", "720x1280"), (720, 1280)),
             landscape_resolution=_parse_resolution(os.getenv("LANDSCAPE_RESOLUTION", "1280x720"), (1280, 720)),
+            output_upscale=_parse_output_upscale(
+                os.getenv("OUTPUT_UPSCALE") or os.getenv("LTX_OUTPUT_UPSCALE")
+            ),
+            ltx_offload=_parse_ltx_offload(os.getenv("LTX_OFFLOAD")),
             mock_media_dir=Path(os.getenv("MOCK_MEDIA_DIR", REPO_ROOT / "mock-media")).resolve(),
             hf_token=os.getenv("HF_TOKEN") or None,
             cors_origins=_parse_origins(

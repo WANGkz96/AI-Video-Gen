@@ -91,6 +91,8 @@ write_runtime_env() {
   write_env_value "VIDEO_DURATION_SEC" "${VIDEO_DURATION_SEC:-8}"
   write_env_value "PORTRAIT_RESOLUTION" "${PORTRAIT_RESOLUTION:-720x1280}"
   write_env_value "LANDSCAPE_RESOLUTION" "${LANDSCAPE_RESOLUTION:-1280x720}"
+  write_env_value "OUTPUT_UPSCALE" "${OUTPUT_UPSCALE:-off}"
+  write_env_value "LTX_OFFLOAD" "${LTX_OFFLOAD:-none}"
   if [ -n "${HF_TOKEN:-}" ]; then
     write_env_value "HF_TOKEN" "${HF_TOKEN}"
   fi
