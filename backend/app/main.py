@@ -45,8 +45,20 @@ async def health(jobs: JobService = Depends(get_jobs)):
 
 
 @app.get("/api/backends")
-async def list_backends(jobs: JobService = Depends(get_jobs)):
-    return jobs.list_backends()
+async def list_backends(
+    include_unavailable: bool = Query(default=False, alias="includeUnavailable"),
+    jobs: JobService = Depends(get_jobs),
+):
+    return jobs.list_backends(include_unavailable=include_unavailable)
+
+
+def _parse_backend_params(raw_value: str | None) -> dict[str, object] | None:
+    if raw_value is None or not raw_value.strip():
+        return None
+    parsed = json.loads(raw_value)
+    if not isinstance(parsed, dict):
+        raise ValueError("backendParams must be a JSON object.")
+    return parsed
 
 
 @app.post("/api/jobs", response_model=JobQueuedResponse)
@@ -55,6 +67,7 @@ async def create_job(
     batch_file: UploadFile | None = File(default=None, alias="batch"),
     backend_query: str | None = Query(default=None, alias="backend"),
     backend_form: str | None = Form(default=None, alias="backend"),
+    backend_params_form: str | None = Form(default=None, alias="backendParams"),
     jobs: JobService = Depends(get_jobs),
 ):
     try:
@@ -63,15 +76,19 @@ async def create_job(
             if batch_file is None:
                 raise HTTPException(status_code=400, detail="Multipart request requires a 'batch' file.")
             backend = backend_form or backend_query
+            backend_params = _parse_backend_params(backend_params_form)
             return await jobs.create_job_from_upload(
                 filename=batch_file.filename or "batch.zip",
                 content=await batch_file.read(),
                 backend=backend,
+                backend_params=backend_params,
             )
-        else:
-            payload = await request.json()
-            backend = backend_query
-        return await jobs.create_job(payload, backend=backend)
+        payload = await request.json()
+        backend = backend_query
+        backend_params = payload.pop("backendParams", None)
+        if backend_params is not None and not isinstance(backend_params, dict):
+            raise ValueError("backendParams must be a JSON object.")
+        return await jobs.create_job(payload, backend=backend, backend_params=backend_params)
     except AdapterUnavailableError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ValueError as exc:

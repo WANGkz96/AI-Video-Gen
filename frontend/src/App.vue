@@ -68,8 +68,16 @@ type HealthPayload = {
 const health = ref<HealthPayload | null>(null);
 const backends = ref<BackendInfo[]>([]);
 const selectedBatchBackend = ref("mock-gen");
+const selectedBatchOutputUpscale = ref("");
 const batchFile = ref<File | null>(null);
 const selectedDirectBackend = ref("mock-gen");
+const selectedDirectOutputUpscale = ref("");
+const outputUpscaleOptions = [
+  { value: "", label: "Server default" },
+  { value: "off", label: "Off" },
+  { value: "1.5x", label: "1.5x" },
+  { value: "2x", label: "2x" },
+];
 const directForm = ref({
   title: "Manual generation",
   prompt: "A dynamic futuristic city with cinematic motion and clear subject focus.",
@@ -148,6 +156,14 @@ function chooseBatchFile(event: Event) {
   batchFile.value = target.files?.[0] ?? null;
 }
 
+function withOutputUpscale(baseParams: Record<string, unknown>, selectedOutputUpscale: string) {
+  const params = { ...baseParams };
+  if (selectedOutputUpscale) {
+    params.outputUpscale = selectedOutputUpscale;
+  }
+  return params;
+}
+
 async function loadBootstrap() {
   const [healthResponse, backendResponse] = await Promise.all([
     fetch("/api/health"),
@@ -174,6 +190,10 @@ async function startBatchJob() {
     const form = new FormData();
     form.append("batch", batchFile.value);
     form.append("backend", selectedBatchBackend.value);
+    const backendParams = withOutputUpscale({}, selectedBatchOutputUpscale.value);
+    if (Object.keys(backendParams).length > 0) {
+      form.append("backendParams", JSON.stringify(backendParams));
+    }
     const response = await fetch("/api/jobs", { method: "POST", body: form });
     const payload = await response.json();
     if (!response.ok) {
@@ -197,10 +217,13 @@ async function startDirectJob() {
       body: JSON.stringify({
         backend: selectedDirectBackend.value,
         ...directForm.value,
-        backendParams: {
-          num_inference_steps: directForm.value.numInferenceSteps,
-          seed: directForm.value.seed,
-        },
+        backendParams: withOutputUpscale(
+          {
+            num_inference_steps: directForm.value.numInferenceSteps,
+            seed: directForm.value.seed,
+          },
+          selectedDirectOutputUpscale.value,
+        ),
       }),
     });
     const payload = await response.json();
@@ -311,6 +334,14 @@ onBeforeUnmount(() => {
             </option>
           </select>
         </label>
+        <label class="field">
+          <span>Output upscaler</span>
+          <select v-model="selectedBatchOutputUpscale">
+            <option v-for="option in outputUpscaleOptions" :key="option.value || 'default'" :value="option.value">
+              {{ option.label }}
+            </option>
+          </select>
+        </label>
         <label class="dropzone">
           <input type="file" accept=".zip,application/zip,.json,application/json" @change="chooseBatchFile" />
           <strong>{{ batchFile?.name ?? "Перетащите или выберите batch ZIP" }}</strong>
@@ -338,6 +369,14 @@ onBeforeUnmount(() => {
             <input v-model="directForm.title" />
           </label>
         </div>
+        <label class="field">
+          <span>Output upscaler</span>
+          <select v-model="selectedDirectOutputUpscale">
+            <option v-for="option in outputUpscaleOptions" :key="option.value || 'default'" :value="option.value">
+              {{ option.label }}
+            </option>
+          </select>
+        </label>
         <label class="field">
           <span>Prompt</span>
           <textarea v-model="directForm.prompt" rows="3" />

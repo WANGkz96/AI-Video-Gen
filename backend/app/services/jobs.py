@@ -52,6 +52,7 @@ class JobRuntime:
     archive_path: Path
     snapshot_path: Path
     logs_path: Path
+    backend_params: dict[str, Any] = field(default_factory=dict)
     logs: list[LogEntry] = field(default_factory=list)
     subscribers: list[asyncio.Queue[dict[str, Any]]] = field(default_factory=list)
 
@@ -94,17 +95,22 @@ class JobService:
             "frontendBuilt": self._settings.frontend_dist_dir.exists(),
         }
 
-    def list_backends(self) -> list[AdapterInfo]:
-        return [adapter.info() for adapter in self._adapters.values()]
+    def list_backends(self, *, include_unavailable: bool = False) -> list[AdapterInfo]:
+        backends = [adapter.info() for adapter in self._adapters.values()]
+        if include_unavailable:
+            return backends
+        return [backend for backend in backends if backend.available and not backend.requiresDownload]
 
     async def create_job(
         self,
         batch_payload: dict[str, Any],
         backend: str | None = None,
         input_files: dict[str, bytes] | None = None,
+        backend_params: dict[str, Any] | None = None,
     ) -> JobQueuedResponse:
         batch = BatchExport.model_validate(batch_payload)
         selected_backend = backend or self._settings.generator_backend
+        job_backend_params = dict(backend_params or {})
         self._ensure_backend_can_run(selected_backend)
         generation_multiplier = self._settings.segment_variants
         total_videos = len(batch.videos)
@@ -145,6 +151,7 @@ class JobService:
             archive_path=archive_path,
             snapshot_path=snapshot_path,
             logs_path=logs_path,
+            backend_params=job_backend_params,
         )
         self._jobs[job_id] = runtime
         self._write_json(input_path, batch.model_dump(mode="json"))
@@ -165,9 +172,15 @@ class JobService:
         filename: str,
         content: bytes,
         backend: str | None = None,
+        backend_params: dict[str, Any] | None = None,
     ) -> JobQueuedResponse:
         batch_payload, input_files = self._parse_batch_upload(filename=filename, content=content)
-        return await self.create_job(batch_payload, backend=backend, input_files=input_files)
+        return await self.create_job(
+            batch_payload,
+            backend=backend,
+            input_files=input_files,
+            backend_params=backend_params,
+        )
 
     async def create_direct_job(self, request: DirectGenerationRequest) -> JobQueuedResponse:
         payload = self._build_direct_batch_payload(request)
@@ -628,7 +641,7 @@ class JobService:
         segment: ManifestSegment,
         candidate_index: int = 1,
     ) -> SegmentGenerationRequest:
-        width, height, fps, backend_params = self._resolve_render_settings(video, manifest)
+        width, height, fps, backend_params = self._resolve_render_settings(video, manifest, runtime.backend_params)
         duration_sec = float(self._settings.video_duration_sec or segment.timeline.generationDurationSec or manifest.segmentDurationSec or 8)
         output_path = (
             runtime.workspace_dir
@@ -704,7 +717,10 @@ class JobService:
         )
 
     def _resolve_render_settings(
-        self, video: VideoInfo, manifest: VariantManifest
+        self,
+        video: VideoInfo,
+        manifest: VariantManifest,
+        job_backend_params: dict[str, Any] | None = None,
     ) -> tuple[int, int, float, dict[str, Any]]:
         profiles = self._collect_profiles(
             video.deliveryProfile,
@@ -736,6 +752,8 @@ class JobService:
             params = profile.get("backendParams")
             if isinstance(params, dict):
                 backend_params.update(params)
+        if job_backend_params:
+            backend_params.update(job_backend_params)
         return width, height, fps, backend_params
 
     def _collect_profiles(self, *candidates: dict[str, Any]) -> list[dict[str, Any]]:

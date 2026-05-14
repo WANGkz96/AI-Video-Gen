@@ -23,7 +23,8 @@ class DiffusersVideoAdapter(BaseGeneratorAdapter):
     def info(self) -> AdapterInfo:
         local_path = self._local_model_dir()
         deps_ok, dep_error = self._check_dependencies()
-        available = deps_ok and self._spec.status != "planned"
+        model_downloaded = local_path.exists()
+        available = deps_ok and model_downloaded and self._spec.status != "planned"
         notes = self._spec.notes
 
         if dep_error:
@@ -31,7 +32,8 @@ class DiffusersVideoAdapter(BaseGeneratorAdapter):
             notes = dep_error
         elif self._spec.status == "planned":
             notes = self._spec.notes or "Backend scaffold exists, but runtime integration is not wired yet."
-        elif not local_path.exists():
+        elif not model_downloaded:
+            available = False
             notes = (
                 f"Model is not downloaded yet. Expected path: {local_path.as_posix()}. "
                 "Use the bootstrap/download script or first-run lazy download."
@@ -46,7 +48,7 @@ class DiffusersVideoAdapter(BaseGeneratorAdapter):
             supportsBatch=True,
             supportsDirect=True,
             requiresRemote=True,
-            requiresDownload=not local_path.exists(),
+            requiresDownload=not model_downloaded,
             modelId=self._spec.model_id,
             localPath=local_path.as_posix(),
             minimumVramGb=self._spec.minimum_vram_gb,
