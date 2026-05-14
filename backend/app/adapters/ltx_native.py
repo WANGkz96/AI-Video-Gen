@@ -27,6 +27,9 @@ class LtxNativeBackendSpec:
     runtime_repo_url: str
     runtime_repo_ref: str
     pipeline_module: str = "ltx_pipelines.ti2vid_one_stage"
+    checkpoint_arg_name: str = "--checkpoint-path"
+    spatial_upsampler_filename: str | None = None
+    allow_negative_prompt: bool = True
     status: Literal["ready", "planned", "experimental"] = "experimental"
     minimum_vram_gb: int = 32
     default_width: int = 768
@@ -44,17 +47,18 @@ class LtxNativeBackendSpec:
 
 
 def get_ltx_native_backend_specs() -> dict[str, LtxNativeBackendSpec]:
+    ltx_2_runtime_ref = "41d924371612b692c0fd1e4d9d94c3dfb3c02cb3"
     return {
         "ltx-2.3": LtxNativeBackendSpec(
             key="ltx-2.3",
             label="LTX 2.3",
-            description="Official Lightricks LTX 2.3 one-stage runtime with native PyTorch pipelines.",
+            description="Official Lightricks LTX 2.3 dev checkpoint with native PyTorch pipelines.",
             model_id="Lightricks/LTX-2.3",
             checkpoint_filename="ltx-2.3-22b-dev.safetensors",
             gemma_model_id="google/gemma-3-12b-it-qat-q4_0-unquantized",
             gemma_dir_name="gemma-3-12b-it-qat-q4_0-unquantized",
             runtime_repo_url="https://github.com/Lightricks/LTX-2.git",
-            runtime_repo_ref="59ca828d5ae24358832ffd7003c2306fbceeba3a",
+            runtime_repo_ref=ltx_2_runtime_ref,
             status="experimental",
             minimum_vram_gb=32,
             default_width=768,
@@ -63,7 +67,33 @@ def get_ltx_native_backend_specs() -> dict[str, LtxNativeBackendSpec]:
             default_steps=20,
             notes=(
                 "Uses the official native Lightricks pipeline and requires the Gemma 3 text encoder assets "
-                "plus the external LTX runtime packages."
+                "plus the external LTX runtime packages. For faster production runs, prefer 'ltx-2.3-distilled'."
+            ),
+        ),
+        "ltx-2.3-distilled": LtxNativeBackendSpec(
+            key="ltx-2.3-distilled",
+            label="LTX 2.3 Distilled 1.1",
+            description="Official Lightricks LTX 2.3 distilled 1.1 pipeline for fast 8-sigma generation.",
+            model_id="Lightricks/LTX-2.3",
+            checkpoint_filename="ltx-2.3-22b-distilled-1.1.safetensors",
+            gemma_model_id="google/gemma-3-12b-it-qat-q4_0-unquantized",
+            gemma_dir_name="gemma-3-12b-it-qat-q4_0-unquantized",
+            runtime_repo_url="https://github.com/Lightricks/LTX-2.git",
+            runtime_repo_ref=ltx_2_runtime_ref,
+            pipeline_module="ltx_pipelines.distilled",
+            checkpoint_arg_name="--distilled-checkpoint-path",
+            spatial_upsampler_filename="ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+            allow_negative_prompt=False,
+            status="experimental",
+            minimum_vram_gb=32,
+            default_width=768,
+            default_height=512,
+            default_fps=16.0,
+            default_steps=8,
+            resolution_multiple=64,
+            notes=(
+                "Uses the official LTX 2.3 distilled v1.1 checkpoint and x2 spatial upscaler. "
+                "The upstream distilled pipeline uses predefined sigmas and ignores CFG/negative prompts."
             ),
         )
     }
@@ -79,7 +109,7 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
         gemma_root = self._gemma_root()
         deps_ok, dep_error = self._check_dependencies()
         runtime_ready = self._runtime_installed()
-        assets_ready = checkpoint.is_file() and self._gemma_ready()
+        assets_ready = self._assets_ready()
         available = deps_ok and runtime_ready and assets_ready and self._spec.status != "planned"
         notes = self._spec.notes
 
@@ -99,6 +129,13 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
             available = False
             notes = (
                 f"LTX checkpoint is not downloaded yet. Expected file: {checkpoint.as_posix()}. "
+                "Run the bootstrap/download script or the model download CLI."
+            )
+        elif self._spec.spatial_upsampler_filename and not self._spatial_upsampler_path().is_file():
+            available = False
+            notes = (
+                "LTX spatial upscaler is not downloaded yet. Expected file: "
+                f"{self._spatial_upsampler_path().as_posix()}. "
                 "Run the bootstrap/download script or the model download CLI."
             )
         elif not self._gemma_ready():
@@ -192,8 +229,20 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
     def _checkpoint_path(self) -> Path:
         return self._checkpoint_dir() / self._spec.checkpoint_filename
 
+    def _spatial_upsampler_path(self) -> Path:
+        if not self._spec.spatial_upsampler_filename:
+            return self._checkpoint_dir() / "__unused_spatial_upsampler__"
+        return self._checkpoint_dir() / self._spec.spatial_upsampler_filename
+
     def _gemma_root(self) -> Path:
         return self._settings.models_dir / self._spec.gemma_dir_name
+
+    def _assets_ready(self) -> bool:
+        if not self._checkpoint_path().is_file() or not self._gemma_ready():
+            return False
+        if self._spec.spatial_upsampler_filename and not self._spatial_upsampler_path().is_file():
+            return False
+        return True
 
     def _gemma_ready(self) -> bool:
         gemma_root = self._gemma_root()
@@ -234,6 +283,15 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
                 token=self._settings.hf_token,
             )
 
+        if self._spec.spatial_upsampler_filename and not self._spatial_upsampler_path().is_file():
+            hf_hub_download(
+                repo_id=self._spec.model_id,
+                filename=self._spec.spatial_upsampler_filename,
+                local_dir=checkpoint_dir,
+                local_dir_use_symlinks=False,
+                token=self._settings.hf_token,
+            )
+
         gemma_root = self._gemma_root()
         if not self._gemma_ready():
             try:
@@ -260,7 +318,7 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
         return checkpoint_dir
 
     def _prepare_runtime(self) -> None:
-        if not self._checkpoint_path().is_file() or not self._gemma_ready():
+        if not self._assets_ready():
             self._download_assets()
             return
         repo_dir = self._runtime_repo_dir()
@@ -295,7 +353,13 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
 
         runtime_env = os.environ.copy()
         runtime_env.setdefault("PIP_DISABLE_PIP_VERSION_CHECK", "1")
-        shared_deps = ["scipy>=1.14", "av>=16.0.1", "tqdm>=4.67.1", "pillow>=11.3.0"]
+        shared_deps = [
+            "scipy>=1.14",
+            "av>=16.0.1",
+            "tqdm>=4.67.1",
+            "pillow>=11.3.0",
+            "openimageio>=3.0.0",
+        ]
         self._run_command(
             [sys.executable, "-m", "pip", "install", *shared_deps],
             "Failed to install shared native LTX runtime dependencies.",
@@ -428,7 +492,7 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
             sys.executable,
             "-m",
             self._spec.pipeline_module,
-            "--checkpoint-path",
+            self._spec.checkpoint_arg_name,
             self._checkpoint_path().as_posix(),
             "--gemma-root",
             self._gemma_root().as_posix(),
@@ -450,8 +514,21 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
             str(steps),
         ]
 
-        if negative_prompt:
+        if self._spec.spatial_upsampler_filename:
+            command.extend(["--spatial-upsampler-path", self._spatial_upsampler_path().as_posix()])
+        if self._spec.allow_negative_prompt and negative_prompt:
             command.extend(["--negative-prompt", negative_prompt])
+        image_arg_name = str(
+            backend_params.get("image_arg_name")
+            or backend_params.get("input_image_arg_name")
+            or os.environ.get("LTX_INPUT_IMAGE_ARG_NAME", "")
+        ).strip()
+        if request.imagePath and image_arg_name:
+            command.extend([image_arg_name, request.imagePath.as_posix()])
+        if "quantization" in backend_params:
+            command.extend(["--quantization", str(backend_params["quantization"])])
+        if "offload" in backend_params:
+            command.extend(["--offload", str(backend_params["offload"])])
         if "streaming_prefetch_count" in backend_params:
             command.extend(
                 ["--streaming-prefetch-count", str(int(backend_params["streaming_prefetch_count"]))]
@@ -481,10 +558,19 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
             "modelId": self._spec.model_id,
             "pipelineModule": self._spec.pipeline_module,
             "checkpointPath": self._checkpoint_path().as_posix(),
+            "spatialUpsamplerPath": (
+                self._spatial_upsampler_path().as_posix()
+                if self._spec.spatial_upsampler_filename
+                else None
+            ),
             "gemmaRoot": self._gemma_root().as_posix(),
             "generationArgs": {
                 "prompt": prompt,
-                "negative_prompt": negative_prompt or "<official-default>",
+                "negative_prompt": (
+                    (negative_prompt or "<official-default>")
+                    if self._spec.allow_negative_prompt
+                    else "<ignored-by-distilled-pipeline>"
+                ),
                 "seed": seed,
                 "height": height,
                 "width": width,
@@ -493,6 +579,8 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
                 "num_inference_steps": steps,
                 "streaming_prefetch_count": backend_params.get("streaming_prefetch_count"),
                 "max_batch_size": backend_params.get("max_batch_size"),
+                "image_path": request.imagePath.as_posix() if request.imagePath else None,
+                "image_arg_name": image_arg_name or None,
             },
             "command": command,
         }

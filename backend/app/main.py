@@ -62,8 +62,12 @@ async def create_job(
         if "multipart/form-data" in content_type:
             if batch_file is None:
                 raise HTTPException(status_code=400, detail="Multipart request requires a 'batch' file.")
-            payload = json.loads((await batch_file.read()).decode("utf-8"))
             backend = backend_form or backend_query
+            return await jobs.create_job_from_upload(
+                filename=batch_file.filename or "batch.zip",
+                content=await batch_file.read(),
+                backend=backend,
+            )
         else:
             payload = await request.json()
             backend = backend_query
@@ -183,4 +187,3 @@ async def spa_fallback(full_path: str):
     if index_path.is_file():
         return FileResponse(index_path)
     raise HTTPException(status_code=404, detail="Not found.")
-

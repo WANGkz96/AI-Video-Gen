@@ -6,9 +6,15 @@ REPO_REF="${REPO_REF:-master}"
 WORK_ROOT="${WORK_ROOT:-/root/work}"
 APP_DIR="${APP_DIR:-${WORK_ROOT}/AI-Video-Gen}"
 PORT="${PORT:-8090}"
-MODELS="${MODELS:-all}"
-GENERATOR_BACKEND="${GENERATOR_BACKEND:-ltx-2.3}"
+MODELS="${MODELS:-ltx-2.3-distilled}"
+GENERATOR_BACKEND="${GENERATOR_BACKEND:-ltx-2.3-distilled}"
 CORS_ORIGINS="${CORS_ORIGINS:-http://127.0.0.1:${PORT},http://localhost:${PORT}}"
+AI_VIDEO_GEN_FORCE_LTX23_DISTILLED="${AI_VIDEO_GEN_FORCE_LTX23_DISTILLED:-1}"
+
+if [ "${AI_VIDEO_GEN_FORCE_LTX23_DISTILLED}" = "1" ]; then
+  MODELS="ltx-2.3-distilled"
+  GENERATOR_BACKEND="ltx-2.3-distilled"
+fi
 
 mkdir -p "${WORK_ROOT}"
 

@@ -56,26 +56,27 @@ npm run dev
 ## Real Models
 
 - `cogvideox-5b`, `wan2.2-ti2v-5b`, `sana-video-2b`, `hunyuan-video-1.5`, `ltx-2-distilled` работают через Diffusers.
-- `ltx-2.3` работает через официальный native runtime от Lightricks, а не через Diffusers.
-- При `download-models` или `scripts/deploy_vast.sh` для `ltx-2.3` сервис:
-  - скачивает `ltx-2.3-22b-dev.safetensors` в `models/ltx-2.3/`;
+- `ltx-2.3` и `ltx-2.3-distilled` работают через официальный native runtime от Lightricks, а не через Diffusers.
+- При `download-models` или `scripts/deploy_vast.sh` для `ltx-2.3-distilled` сервис:
+  - скачивает `ltx-2.3-22b-distilled-1.1.safetensors` в `models/ltx-2.3-distilled/`;
+  - скачивает `ltx-2.3-spatial-upscaler-x2-1.1.safetensors` в `models/ltx-2.3-distilled/`;
   - скачивает Gemma 3 assets в `models/gemma-3-12b-it-qat-q4_0-unquantized/`;
   - клонирует pinned revision официального `LTX-2` runtime в `data/runtime/ltx-2-official/`;
   - устанавливает `ltx-core` и `ltx-pipelines` в текущее виртуальное окружение.
-- Для `ltx-2.3` нужен `HF_TOKEN` с одобренным доступом к gated repo `google/gemma-3-12b-it-qat-q4_0-unquantized`.
+- Для `ltx-2.3`/`ltx-2.3-distilled` нужен `HF_TOKEN` с одобренным доступом к gated repo `google/gemma-3-12b-it-qat-q4_0-unquantized`.
 
 Для полного Vast deploy:
 
 ```bash
 git clone https://github.com/WANGkz96/AI-Video-Gen.git
 cd AI-Video-Gen
-PORT=8090 MODELS=all ./scripts/deploy_vast.sh
+PORT=8090 MODELS=ltx-2.3-distilled GENERATOR_BACKEND=ltx-2.3-distilled ./scripts/deploy_vast.sh
 ```
 
 Если shell-скрипты после clone не получили executable bit, запускай через `bash`:
 
 ```bash
-PORT=8090 MODELS=all bash ./scripts/deploy_vast.sh
+PORT=8090 MODELS=ltx-2.3-distilled GENERATOR_BACKEND=ltx-2.3-distilled bash ./scripts/deploy_vast.sh
 ```
 
 Для автозапуска через Vast template, `PROVISIONING_SCRIPT` и кнопки во `Instance Portal` см. [`docs/vast-template.md`](./docs/vast-template.md).

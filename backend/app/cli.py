@@ -3,13 +3,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import shutil
 from pathlib import Path
 
 from backend.app.adapters.base import AdapterUnavailableError, BaseGeneratorAdapter
 from backend.app.adapters.registry import build_real_model_registry, get_downloadable_backend_keys
 from backend.app.config import Settings
 from backend.app.models import SegmentGenerationRequest
-from backend.app.services.jobs import compact_timestamp
+from backend.app.services.jobs import JobService, compact_timestamp
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -35,6 +36,13 @@ def build_parser() -> argparse.ArgumentParser:
     run_segment.add_argument("--backend", required=True)
     run_segment.add_argument("--request-file", required=True)
     run_segment.add_argument("--artifact-file", required=True)
+
+    run_batch = subparsers.add_parser("run-batch", help="Run one batch JSON through the job service.")
+    run_batch.add_argument("--batch-file", required=True)
+    run_batch.add_argument("--backend", default=None)
+    run_batch.add_argument("--timeout-sec", type=float, default=3600)
+    run_batch.add_argument("--poll-sec", type=float, default=1)
+    run_batch.add_argument("--copy-archive-to", default=None)
     return parser
 
 
@@ -110,6 +118,56 @@ async def run_serialized_segment(args: argparse.Namespace) -> None:
     )
 
 
+async def run_batch_job(args: argparse.Namespace) -> None:
+    settings = Settings.from_env()
+    service = JobService(settings)
+    batch_path = Path(args.batch_file)
+    await service.start()
+    try:
+        queued = await service.create_job_from_upload(
+            filename=batch_path.name,
+            content=batch_path.read_bytes(),
+            backend=args.backend,
+        )
+        job_id = queued.jobId
+        deadline = asyncio.get_running_loop().time() + max(1, args.timeout_sec)
+        terminal_statuses = {"completed", "completed_with_errors", "failed"}
+
+        while True:
+            snapshot = service.get_job(job_id)
+            if snapshot.status in terminal_statuses:
+                break
+            if asyncio.get_running_loop().time() >= deadline:
+                raise TimeoutError(f"Timed out waiting for job {job_id}.")
+            await asyncio.sleep(max(0.1, args.poll_sec))
+
+        archive_path = None
+        try:
+            archive_path = service.get_archive_path(job_id)
+        except FileNotFoundError:
+            archive_path = None
+
+        copied_archive_path = None
+        if archive_path is not None and args.copy_archive_to:
+            copy_target = Path(args.copy_archive_to)
+            if copy_target.is_dir() or str(args.copy_archive_to).endswith(("/", "\\")):
+                copy_target.mkdir(parents=True, exist_ok=True)
+                copy_target = copy_target / archive_path.name
+            else:
+                copy_target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(archive_path, copy_target)
+            copied_archive_path = copy_target
+
+        output = {
+            "job": snapshot.model_dump(mode="json"),
+            "archivePath": archive_path.as_posix() if archive_path else None,
+            "copiedArchivePath": copied_archive_path.as_posix() if copied_archive_path else None,
+        }
+        print(json.dumps(output, ensure_ascii=False, indent=2))
+    finally:
+        await service.stop()
+
+
 def run_downloads(args: argparse.Namespace) -> None:
     settings = Settings.from_env()
     selected = parse_model_selection(args.models)
@@ -159,6 +217,9 @@ def main() -> None:
         return
     if args.command == "run-segment":
         asyncio.run(run_serialized_segment(args))
+        return
+    if args.command == "run-batch":
+        asyncio.run(run_batch_job(args))
         return
     raise SystemExit(f"Unsupported command: {args.command}")
 

@@ -165,7 +165,7 @@ async function loadBootstrap() {
 
 async function startBatchJob() {
   if (!batchFile.value) {
-    errorMessage.value = "Выберите batch.json.";
+    errorMessage.value = "Выберите batch ZIP.";
     return;
   }
   busy.value = true;
@@ -312,8 +312,8 @@ onBeforeUnmount(() => {
           </select>
         </label>
         <label class="dropzone">
-          <input type="file" accept=".json,application/json" @change="chooseBatchFile" />
-          <strong>{{ batchFile?.name ?? "Перетащите или выберите batch.json" }}</strong>
+          <input type="file" accept=".zip,application/zip,.json,application/json" @change="chooseBatchFile" />
+          <strong>{{ batchFile?.name ?? "Перетащите или выберите batch ZIP" }}</strong>
           <span>Загрузка через multipart в `POST /api/jobs`</span>
         </label>
         <button class="cta" :disabled="busy" @click="startBatchJob">Запустить batch</button>

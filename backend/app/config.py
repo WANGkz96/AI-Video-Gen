@@ -8,8 +8,43 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _load_env_file(path: Path) -> None:
+    if not path.is_file():
+        return
+
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not key or key in os.environ:
+            continue
+
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        os.environ[key] = value
+
+
 def _parse_origins(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _parse_resolution(value: str, fallback: tuple[int, int]) -> tuple[int, int]:
+    text = str(value or "").strip().lower().replace("×", "x")
+    if "x" not in text:
+        return fallback
+    width_raw, height_raw = text.split("x", 1)
+    try:
+        width = int(width_raw.strip())
+        height = int(height_raw.strip())
+    except ValueError:
+        return fallback
+    if width <= 0 or height <= 0:
+        return fallback
+    return width, height
 
 
 @dataclass(slots=True)
@@ -24,6 +59,10 @@ class Settings:
     generator_backend: str
     generator_api_url: str
     max_parallel_segments: int
+    segment_variants: int
+    video_duration_sec: float
+    portrait_resolution: tuple[int, int]
+    landscape_resolution: tuple[int, int]
     mock_media_dir: Path
     hf_token: str | None
     cors_origins: list[str]
@@ -31,6 +70,8 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
+        _load_env_file(REPO_ROOT / ".env")
+
         workdir = Path(os.getenv("WORKDIR", REPO_ROOT / "data")).resolve()
         jobs_dir = Path(os.getenv("JOBS_DIR", workdir / "jobs")).resolve()
         archive_dir = Path(os.getenv("ARCHIVE_DIR", workdir / "archives")).resolve()
@@ -54,6 +95,10 @@ class Settings:
             generator_backend=os.getenv("GENERATOR_BACKEND", "mock-gen"),
             generator_api_url=os.getenv("GENERATOR_API_URL", "http://localhost:8188"),
             max_parallel_segments=max(1, int(os.getenv("MAX_PARALLEL_SEGMENTS", "1"))),
+            segment_variants=max(1, int(os.getenv("SEGMENT_VARIANTS", "4"))),
+            video_duration_sec=max(1.0, float(os.getenv("VIDEO_DURATION_SEC", "8"))),
+            portrait_resolution=_parse_resolution(os.getenv("PORTRAIT_RESOLUTION", "720x1280"), (720, 1280)),
+            landscape_resolution=_parse_resolution(os.getenv("LANDSCAPE_RESOLUTION", "1280x720"), (1280, 720)),
             mock_media_dir=Path(os.getenv("MOCK_MEDIA_DIR", REPO_ROOT / "mock-media")).resolve(),
             hf_token=os.getenv("HF_TOKEN") or None,
             cors_origins=_parse_origins(

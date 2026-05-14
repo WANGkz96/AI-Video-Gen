@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import sys
 import zipfile
@@ -97,11 +98,15 @@ class JobService:
         return [adapter.info() for adapter in self._adapters.values()]
 
     async def create_job(
-        self, batch_payload: dict[str, Any], backend: str | None = None
+        self,
+        batch_payload: dict[str, Any],
+        backend: str | None = None,
+        input_files: dict[str, bytes] | None = None,
     ) -> JobQueuedResponse:
         batch = BatchExport.model_validate(batch_payload)
         selected_backend = backend or self._settings.generator_backend
         self._ensure_backend_can_run(selected_backend)
+        generation_multiplier = self._settings.segment_variants
         total_videos = len(batch.videos)
         total_variants = sum(len(video.variants) for video in batch.videos)
         total_segments = sum(
@@ -109,7 +114,7 @@ class JobService:
             for video in batch.videos
             for variant in video.variants
             if variant.manifest is not None
-        )
+        ) * generation_multiplier
 
         job_id = self._next_job_id()
         workspace_dir = self._settings.jobs_dir / job_id
@@ -143,10 +148,26 @@ class JobService:
         )
         self._jobs[job_id] = runtime
         self._write_json(input_path, batch.model_dump(mode="json"))
+        for relative_path, content in (input_files or {}).items():
+            target_path = self._resolve_input_archive_path(input_dir, relative_path)
+            if target_path == input_path:
+                continue
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_bytes(content)
         self._write_snapshot(runtime)
         await self._log(runtime, "info", f"Job {job_id} queued with backend '{selected_backend}'.")
         await self._queue.put(job_id)
         return JobQueuedResponse(jobId=job_id, status=snapshot.status)
+
+    async def create_job_from_upload(
+        self,
+        *,
+        filename: str,
+        content: bytes,
+        backend: str | None = None,
+    ) -> JobQueuedResponse:
+        batch_payload, input_files = self._parse_batch_upload(filename=filename, content=content)
+        return await self.create_job(batch_payload, backend=backend, input_files=input_files)
 
     async def create_direct_job(self, request: DirectGenerationRequest) -> JobQueuedResponse:
         payload = self._build_direct_batch_payload(request)
@@ -212,12 +233,12 @@ class JobService:
         registry["ltx-video-2"] = PlannedAdapter(
             "ltx-video-2",
             "LTX Video 2",
-            "Use 'ltx-2-distilled' instead.",
+            "Use 'ltx-2.3-distilled' instead.",
         )
         registry["ltx-video-2-distilled"] = PlannedAdapter(
             "ltx-video-2-distilled",
             "LTX Video 2 Distilled",
-            "Use 'ltx-2-distilled' instead.",
+            "Use 'ltx-2.3-distilled' instead.",
         )
         registry["hunyuan-video"] = PlannedAdapter(
             "hunyuan-video",
@@ -248,6 +269,65 @@ class JobService:
         if runtime is None:
             raise KeyError(job_id)
         return runtime
+
+    def _parse_batch_upload(
+        self,
+        *,
+        filename: str,
+        content: bytes,
+    ) -> tuple[dict[str, Any], dict[str, bytes]]:
+        name = str(filename or "").lower()
+        if name.endswith(".zip") or content.startswith(b"PK\x03\x04"):
+            with zipfile.ZipFile(io.BytesIO(content)) as zip_handle:
+                names = [item for item in zip_handle.namelist() if not item.endswith("/")]
+                batch_name = "batch.json" if "batch.json" in names else (
+                    "input/batch.json" if "input/batch.json" in names else None
+                )
+                if batch_name is None:
+                    raise ValueError("Input ZIP must contain batch.json.")
+                batch_payload = json.loads(zip_handle.read(batch_name).decode("utf-8-sig"))
+                input_files: dict[str, bytes] = {}
+                for item in names:
+                    normalized = self._normalize_archive_relative_path(item)
+                    if normalized in {"batch.json", "input/batch.json"}:
+                        continue
+                    input_files[normalized] = zip_handle.read(item)
+            return batch_payload, input_files
+
+        return json.loads(content.decode("utf-8-sig")), {}
+
+    def _normalize_archive_relative_path(self, relative_path: str) -> str:
+        normalized = str(relative_path or "").replace("\\", "/").lstrip("./").strip()
+        if (
+            not normalized
+            or normalized.startswith("/")
+            or ":" in normalized.split("/", 1)[0]
+            or any(part == ".." for part in normalized.split("/"))
+        ):
+            raise ValueError(f"Unsafe archive path: {relative_path}")
+        if normalized.startswith("input/"):
+            normalized = normalized[len("input/") :]
+        return normalized
+
+    def _resolve_input_archive_path(self, input_dir: Path, relative_path: str) -> Path:
+        normalized = self._normalize_archive_relative_path(relative_path)
+        target = (input_dir / normalized).resolve()
+        root = input_dir.resolve()
+        if target != root and root not in target.parents:
+            raise ValueError(f"Archive path escapes input directory: {relative_path}")
+        return target
+
+    def _resolve_input_file(self, runtime: JobRuntime, relative_path: str | None) -> Path | None:
+        if not relative_path:
+            return None
+        normalized = self._normalize_archive_relative_path(relative_path)
+        target = (runtime.workspace_dir / "input" / normalized).resolve()
+        root = (runtime.workspace_dir / "input").resolve()
+        if target != root and root not in target.parents:
+            raise ValueError(f"Input path escapes job input directory: {relative_path}")
+        if not target.is_file():
+            raise FileNotFoundError(f"Input asset is missing: {relative_path}")
+        return target
 
     def _next_job_id(self) -> str:
         self._job_counter += 1
@@ -355,65 +435,86 @@ class JobService:
         assert manifest is not None
 
         for segment in sorted(manifest.segments, key=lambda item: item.segmentIndex):
-            request = self._build_segment_request(runtime, video, variant, manifest, segment)
             await self._log(
                 runtime,
                 "info",
                 f"[{video.videoId}/{variant.key}] Segment {segment.segmentIndex} -> {segment.segmentId}",
             )
+            segment_entry: dict[str, Any] = {
+                "segmentId": segment.segmentId,
+                "candidates": [],
+            }
+            variant_entry["segments"].append(segment_entry)
             try:
-                artifact = await self._generate_segment(adapter, request)
-                probed = probe_video(
-                    artifact.outputPath,
-                    fallback_width=request.width,
-                    fallback_height=request.height,
-                    fallback_fps=request.fps,
-                    fallback_duration=request.durationSec,
-                )
-                self._assert_probe(artifact.outputPath, probed)
+                for candidate_index in range(1, self._settings.segment_variants + 1):
+                    request = self._build_segment_request(
+                        runtime,
+                        video,
+                        variant,
+                        manifest,
+                        segment,
+                        candidate_index=candidate_index,
+                    )
+                    artifact = await self._generate_segment(adapter, request)
+                    probed = probe_video(
+                        artifact.outputPath,
+                        fallback_width=request.width,
+                        fallback_height=request.height,
+                        fallback_fps=request.fps,
+                        fallback_duration=request.durationSec,
+                    )
+                    self._assert_probe(artifact.outputPath, probed)
 
-                video_rel_path = Path("videos") / str(video.videoId) / variant.key / f"{segment.segmentId}.mp4"
-                metadata_path = (runtime.workspace_dir / video_rel_path).with_suffix(".json")
-                metadata_doc = self._build_segment_metadata(
-                    video=video,
-                    variant=variant,
-                    segment=segment,
-                    request=request,
-                    probed=probed,
-                    video_rel_path=video_rel_path,
-                    artifact_debug=artifact.debug,
-                    model_name=artifact.modelName,
-                    model_version=artifact.modelVersion,
-                )
-                self._write_json(metadata_path, metadata_doc)
+                    video_rel_path = (
+                        Path("videos")
+                        / str(video.videoId)
+                        / variant.key
+                        / segment.segmentId
+                        / f"c{candidate_index:02d}.mp4"
+                    )
+                    metadata_path = (runtime.workspace_dir / video_rel_path).with_suffix(".json")
+                    metadata_doc = self._build_segment_metadata(
+                        video=video,
+                        variant=variant,
+                        segment=segment,
+                        request=request,
+                        probed=probed,
+                        video_rel_path=video_rel_path,
+                        artifact_debug=artifact.debug,
+                        model_name=artifact.modelName,
+                        model_version=artifact.modelVersion,
+                        candidate_index=candidate_index,
+                    )
+                    self._write_json(metadata_path, metadata_doc)
 
-                variant_entry["segments"].append(
-                    {
-                        "segmentId": segment.segmentId,
+                    candidate_entry = {
+                        "candidateIndex": candidate_index,
                         "videoFile": video_rel_path.as_posix(),
                         "durationSec": probed["durationSec"],
                         "width": probed["width"],
                         "height": probed["height"],
                         "fps": probed["fps"],
                     }
-                )
-                runtime.snapshot.completedSegments += 1
-                runtime.snapshot.updatedAt = utc_now()
-                self._write_snapshot(runtime)
-                await self._broadcast_snapshot(runtime)
-                await self._log(
-                    runtime,
-                    "info",
-                    f"Segment {segment.segmentId} completed via {artifact.modelName}.",
-                )
+                    segment_entry["candidates"].append(candidate_entry)
+                    if candidate_index == 1:
+                        segment_entry.update({
+                            "videoFile": candidate_entry["videoFile"],
+                            "durationSec": candidate_entry["durationSec"],
+                            "width": candidate_entry["width"],
+                            "height": candidate_entry["height"],
+                            "fps": candidate_entry["fps"],
+                        })
+                    runtime.snapshot.completedSegments += 1
+                    runtime.snapshot.updatedAt = utc_now()
+                    self._write_snapshot(runtime)
+                    await self._broadcast_snapshot(runtime)
+                    await self._log(
+                        runtime,
+                        "info",
+                        f"Segment {segment.segmentId} candidate {candidate_index} completed via {artifact.modelName}.",
+                    )
             except Exception as exc:
-                variant_entry["segments"].append(
-                    {
-                        "segmentId": segment.segmentId,
-                        "status": "failed",
-                        "error": str(exc),
-                    }
-                )
+                segment_entry.update({"status": "failed", "error": str(exc)})
                 runtime.snapshot.failedSegments += 1
                 runtime.snapshot.updatedAt = utc_now()
                 self._write_snapshot(runtime)
@@ -485,6 +586,7 @@ class JobService:
         artifact_debug: dict[str, Any],
         model_name: str,
         model_version: str | None,
+        candidate_index: int,
     ) -> dict[str, Any]:
         return {
             "schemaVersion": "video-pipeline.external-generation.segment.v1",
@@ -495,8 +597,10 @@ class JobService:
             "variantKey": variant.key,
             "segmentId": segment.segmentId,
             "segmentIndex": segment.segmentIndex,
+            "candidateIndex": candidate_index,
             "timeline": segment.timeline.model_dump(mode="json"),
             "prompt": request.prompt,
+            "imagePrompt": request.imagePrompt,
             "negativePrompt": request.negativePrompt,
             "continuityNote": request.continuityNote,
             "shotGoal": request.shotGoal,
@@ -508,7 +612,10 @@ class JobService:
             "resolvedNegativePrompt": request.resolvedNegativePrompt,
             "model": {"name": model_name, "version": model_version},
             "render": probed,
-            "files": {"videoFile": video_rel_path.as_posix()},
+            "files": {
+                "videoFile": video_rel_path.as_posix(),
+                "imageFile": request.imageFile,
+            },
             "debug": artifact_debug,
         }
 
@@ -519,11 +626,24 @@ class JobService:
         variant: VariantInfo,
         manifest: VariantManifest,
         segment: ManifestSegment,
+        candidate_index: int = 1,
     ) -> SegmentGenerationRequest:
         width, height, fps, backend_params = self._resolve_render_settings(video, manifest)
-        duration_sec = float(segment.timeline.generationDurationSec or manifest.segmentDurationSec or 8)
-        output_path = runtime.workspace_dir / "videos" / str(video.videoId) / variant.key / f"{segment.segmentId}.mp4"
+        duration_sec = float(self._settings.video_duration_sec or segment.timeline.generationDurationSec or manifest.segmentDurationSec or 8)
+        output_path = (
+            runtime.workspace_dir
+            / "videos"
+            / str(video.videoId)
+            / variant.key
+            / segment.segmentId
+            / f"c{candidate_index:02d}.mp4"
+        )
         prompt = segment.generation.prompt or ""
+        image_prompt = segment.generation.imagePrompt or prompt
+        image = segment.generation.image if isinstance(segment.generation.image, dict) else {}
+        image_file = segment.generation.imageFile or image.get("file") or image.get("path") or None
+        image_mime_type = segment.generation.imageMimeType or image.get("mimeType") or image.get("mime_type") or None
+        image_path = self._resolve_input_file(runtime, image_file) if image_file else None
         negative_prompt = segment.generation.negativePrompt or ""
         resolved_prompt = "\n".join(
             item
@@ -553,6 +673,10 @@ class JobService:
             segmentIndex=segment.segmentIndex,
             promptLanguage=manifest.promptLanguage,
             prompt=prompt,
+            imagePrompt=image_prompt,
+            imagePath=image_path,
+            imageFile=image_file,
+            imageMimeType=image_mime_type,
             negativePrompt=negative_prompt,
             continuityNote=segment.generation.continuityNote,
             shotGoal=segment.generation.shotGoal,
@@ -568,17 +692,45 @@ class JobService:
             fps=fps,
             durationSec=duration_sec,
             outputPath=output_path,
-            backendParams=backend_params,
+            backendParams={
+                **backend_params,
+                "candidateIndex": candidate_index,
+                "segmentVariants": self._settings.segment_variants,
+                "image": image_path.as_posix() if image_path else None,
+                "sourceImage": image_file,
+                "imageMimeType": image_mime_type,
+            },
             timeline=segment.timeline.model_dump(mode="json"),
         )
 
     def _resolve_render_settings(
         self, video: VideoInfo, manifest: VariantManifest
     ) -> tuple[int, int, float, dict[str, Any]]:
-        profiles = self._collect_profiles(video.outputProfile, manifest.projectContext.outputProfile)
-        width = int(self._pick_profile_value(profiles, ("width", "outputWidth", "videoWidth"), 720))
-        height = int(self._pick_profile_value(profiles, ("height", "outputHeight", "videoHeight"), 1280))
+        profiles = self._collect_profiles(
+            video.deliveryProfile,
+            video.outputProfile,
+            manifest.projectContext.deliveryProfile,
+            manifest.projectContext.outputProfile,
+        )
+        width = int(
+            self._pick_profile_value(
+                profiles,
+                ("width", "outputWidth", "videoWidth", "resolution.width"),
+                720,
+            )
+        )
+        height = int(
+            self._pick_profile_value(
+                profiles,
+                ("height", "outputHeight", "videoHeight", "resolution.height"),
+                1280,
+            )
+        )
         fps = float(self._pick_profile_value(profiles, ("fps", "frameRate"), 24.0))
+        if width > height:
+            width, height = self._settings.landscape_resolution
+        elif height > width:
+            width, height = self._settings.portrait_resolution
         backend_params: dict[str, Any] = {}
         for profile in profiles:
             params = profile.get("backendParams")
@@ -602,7 +754,7 @@ class JobService:
     ) -> int | float:
         for profile in profiles:
             for key in keys:
-                value = profile.get(key)
+                value = self._read_profile_value(profile, key)
                 if value is None:
                     continue
                 try:
@@ -610,6 +762,19 @@ class JobService:
                 except (TypeError, ValueError):
                     continue
         return default
+
+    def _read_profile_value(self, profile: dict[str, Any], key: str) -> Any:
+        if "." not in key:
+            return profile.get(key)
+
+        cursor: Any = profile
+        for part in key.split("."):
+            if not isinstance(cursor, dict):
+                return None
+            cursor = cursor.get(part)
+            if cursor is None:
+                return None
+        return cursor
 
     def _assert_probe(self, output_path: Path, probed: dict[str, float | int]) -> None:
         if not output_path.is_file():
@@ -628,38 +793,41 @@ class JobService:
                 for segment in variant["segments"]:
                     if segment.get("status") == "failed":
                         continue
-                    video_file = runtime.workspace_dir / segment["videoFile"]
-                    metadata_file = video_file.with_suffix(".json")
-                    if not video_file.is_file():
-                        errors.append(
-                            {
-                                "segmentId": segment["segmentId"],
-                                "status": "failed",
-                                "error": f"Missing generated file: {segment['videoFile']}",
-                            }
-                        )
-                        continue
-                    if not metadata_file.is_file():
-                        errors.append(
-                            {
-                                "segmentId": segment["segmentId"],
-                                "status": "failed",
-                                "error": (
-                                    "Missing metadata JSON: "
-                                    f"{metadata_file.relative_to(runtime.workspace_dir).as_posix()}"
-                                ),
-                            }
-                        )
-                        continue
-                    metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
-                    if metadata.get("segmentId") != segment["segmentId"]:
-                        errors.append(
-                            {
-                                "segmentId": segment["segmentId"],
-                                "status": "failed",
-                                "error": f"Metadata segmentId mismatch for {segment['segmentId']}",
-                            }
-                        )
+                    candidates = segment.get("candidates")
+                    entries = candidates if isinstance(candidates, list) and candidates else [segment]
+                    for candidate in entries:
+                        video_file = runtime.workspace_dir / candidate["videoFile"]
+                        metadata_file = video_file.with_suffix(".json")
+                        if not video_file.is_file():
+                            errors.append(
+                                {
+                                    "segmentId": segment["segmentId"],
+                                    "status": "failed",
+                                    "error": f"Missing generated file: {candidate['videoFile']}",
+                                }
+                            )
+                            continue
+                        if not metadata_file.is_file():
+                            errors.append(
+                                {
+                                    "segmentId": segment["segmentId"],
+                                    "status": "failed",
+                                    "error": (
+                                        "Missing metadata JSON: "
+                                        f"{metadata_file.relative_to(runtime.workspace_dir).as_posix()}"
+                                    ),
+                                }
+                            )
+                            continue
+                        metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
+                        if metadata.get("segmentId") != segment["segmentId"]:
+                            errors.append(
+                                {
+                                    "segmentId": segment["segmentId"],
+                                    "status": "failed",
+                                    "error": f"Metadata segmentId mismatch for {segment['segmentId']}",
+                                }
+                            )
         return errors
 
     def _create_archive(self, runtime: JobRuntime) -> None:

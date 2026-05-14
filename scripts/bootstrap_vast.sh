@@ -3,8 +3,10 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV_DIR="${ROOT_DIR}/.venv"
-MODELS="${MODELS:-all}"
+MODELS="${MODELS:-ltx-2.3-distilled}"
+GENERATOR_BACKEND="${GENERATOR_BACKEND:-ltx-2.3-distilled}"
 PORT="${PORT:-8080}"
+CORS_ORIGINS="${CORS_ORIGINS:-http://127.0.0.1:${PORT},http://localhost:${PORT}}"
 PYTHON_BIN="${PYTHON_BIN:-}"
 
 ensure_apt_packages() {
@@ -66,6 +68,34 @@ resolve_python() {
   return 1
 }
 
+write_env_value() {
+  local key="$1"
+  local value="$2"
+  local file="${ROOT_DIR}/.env"
+  local escaped="${value//\\/\\\\}"
+  escaped="${escaped//&/\\&}"
+  escaped="${escaped//|/\\|}"
+
+  if grep -q "^${key}=" "${file}"; then
+    sed -i "s|^${key}=.*|${key}=${escaped}|" "${file}"
+  else
+    printf '%s=%s\n' "${key}" "${value}" >> "${file}"
+  fi
+}
+
+write_runtime_env() {
+  write_env_value "PORT" "${PORT}"
+  write_env_value "GENERATOR_BACKEND" "${GENERATOR_BACKEND}"
+  write_env_value "CORS_ORIGINS" "${CORS_ORIGINS}"
+  write_env_value "SEGMENT_VARIANTS" "${SEGMENT_VARIANTS:-2}"
+  write_env_value "VIDEO_DURATION_SEC" "${VIDEO_DURATION_SEC:-8}"
+  write_env_value "PORTRAIT_RESOLUTION" "${PORTRAIT_RESOLUTION:-720x1280}"
+  write_env_value "LANDSCAPE_RESOLUTION" "${LANDSCAPE_RESOLUTION:-1280x720}"
+  if [ -n "${HF_TOKEN:-}" ]; then
+    write_env_value "HF_TOKEN" "${HF_TOKEN}"
+  fi
+}
+
 cd "${ROOT_DIR}"
 mkdir -p models data/jobs data/archives data/tmp
 
@@ -97,6 +127,7 @@ fi
 if [ ! -f .env ]; then
   cp .env.example .env
 fi
+write_runtime_env
 python -m backend.app.cli download-models --models "${MODELS}"
 
 echo "Bootstrap complete."

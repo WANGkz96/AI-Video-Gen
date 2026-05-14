@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${PORT:-8090}"
-BACKEND="${GENERATOR_BACKEND:-cogvideox-5b}"
+BACKEND="${GENERATOR_BACKEND:-ltx-2.3-distilled}"
 CORS="${CORS_ORIGINS:-http://127.0.0.1:8080,http://localhost:8080}"
 
 mkdir -p "${ROOT_DIR}/.run"

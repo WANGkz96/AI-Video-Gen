@@ -59,6 +59,10 @@ class SegmentNarration(BaseSchema):
 
 class SegmentGeneration(BaseSchema):
     prompt: str = ""
+    imagePrompt: str = ""
+    imageFile: str | None = None
+    imageMimeType: str | None = None
+    image: dict[str, Any] = Field(default_factory=dict)
     negativePrompt: str = ""
     continuityNote: str = ""
     shotGoal: str = ""
@@ -201,6 +205,10 @@ class SegmentGenerationRequest(BaseSchema):
     segmentIndex: int
     promptLanguage: str
     prompt: str
+    imagePrompt: str = ""
+    imagePath: Path | None = None
+    imageFile: str | None = None
+    imageMimeType: str | None = None
     negativePrompt: str
     continuityNote: str
     shotGoal: str
