@@ -774,7 +774,10 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
     ) -> None:
         ffmpeg = self._find_ffmpeg()
         tmp_path = output_path.with_name(f"{output_path.stem}.resized.tmp{output_path.suffix}")
-        scale_filter = f"scale={width}:{height}:flags=lanczos"
+        scale_filter = (
+            f"scale={width}:{height}:force_original_aspect_ratio=increase:flags=lanczos,"
+            f"crop={width}:{height}"
+        )
         command = [
             ffmpeg,
             "-y",
@@ -859,8 +862,11 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
         return frames
 
     def _normalize_dimension(self, value: int) -> int:
+        value = int(value)
         value = max(self._spec.resolution_multiple, value)
-        value = value - (value % self._spec.resolution_multiple)
+        remainder = value % self._spec.resolution_multiple
+        if remainder:
+            value += self._spec.resolution_multiple - remainder
         return value or self._spec.resolution_multiple
 
     def _run_command(
