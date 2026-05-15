@@ -71,6 +71,17 @@ def _parse_ltx_offload(value: str | None) -> str | None:
     return None
 
 
+def _parse_bool(value: str | None, fallback: bool = False) -> bool:
+    text = str(value if value is not None else "").strip().lower()
+    if not text:
+        return fallback
+    if text in {"1", "true", "yes", "on", "enabled"}:
+        return True
+    if text in {"0", "false", "no", "off", "disabled", "none"}:
+        return False
+    return fallback
+
+
 @dataclass(slots=True)
 class Settings:
     port: int
@@ -89,6 +100,7 @@ class Settings:
     landscape_resolution: tuple[int, int]
     output_upscale: float | None
     ltx_offload: str | None
+    strip_generated_audio: bool
     mock_media_dir: Path
     hf_token: str | None
     cors_origins: list[str]
@@ -129,6 +141,10 @@ class Settings:
                 os.getenv("OUTPUT_UPSCALE") or os.getenv("LTX_OUTPUT_UPSCALE")
             ),
             ltx_offload=_parse_ltx_offload(os.getenv("LTX_OFFLOAD")),
+            strip_generated_audio=_parse_bool(
+                os.getenv("STRIP_GENERATED_AUDIO") or os.getenv("LTX_STRIP_AUDIO"),
+                True,
+            ),
             mock_media_dir=Path(os.getenv("MOCK_MEDIA_DIR", REPO_ROOT / "mock-media")).resolve(),
             hf_token=os.getenv("HF_TOKEN") or None,
             cors_origins=_parse_origins(
