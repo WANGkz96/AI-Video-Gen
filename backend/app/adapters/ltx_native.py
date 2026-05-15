@@ -227,6 +227,8 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
         output_upscale = self._resolve_output_upscale(request.backendParams)
         if output_upscale:
             await asyncio.to_thread(self._post_upscale_output, request.outputPath, output_upscale, debug)
+        if self._resolve_strip_audio(request.backendParams):
+            await asyncio.to_thread(self._strip_output_audio, request.outputPath, debug)
         return GenerationArtifact(
             modelName=self._spec.key,
             modelVersion=self._spec.model_id,
@@ -507,7 +509,7 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
         fps = float(backend_params.get("fps", request.fps or self._spec.default_fps))
         num_frames = self._resolve_num_frames(request, fps, backend_params)
         steps = int(backend_params.get("num_inference_steps", self._spec.default_steps))
-        seed = int(backend_params.get("seed", 42))
+        seed = self._resolve_seed(request, backend_params)
         prompt = request.resolvedPrompt or request.prompt
         negative_prompt = request.resolvedNegativePrompt or request.negativePrompt
         command = [
@@ -629,7 +631,7 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
             }
 
         image_arg_name = raw_arg_name
-        if not image_arg_name and self._spec.pipeline_module == "ltx_pipelines.distilled":
+        if not image_arg_name and self._spec.pipeline_module.startswith("ltx_pipelines."):
             image_arg_name = "--image"
         if not image_arg_name:
             return [], {
@@ -648,7 +650,7 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
             strength = float(
                 backend_params.get("image_strength")
                 or backend_params.get("imageStrength")
-                or os.environ.get("LTX_IMAGE_STRENGTH", 0.85)
+                or os.environ.get("LTX_IMAGE_STRENGTH", 1.0)
             )
             crf_value = (
                 backend_params.get("image_crf")
@@ -682,6 +684,19 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
             "format": "ARG PATH",
         }
 
+    def _resolve_seed(
+        self,
+        request: SegmentGenerationRequest,
+        backend_params: dict[str, object],
+    ) -> int:
+        if backend_params.get("seed") not in {None, ""}:
+            return int(backend_params["seed"])
+        base_seed = int(os.environ.get("LTX_SEED", 42))
+        segment_index = int(getattr(request, "segmentIndex", 0) or 0)
+        candidate_index = int(backend_params.get("candidateIndex") or 0)
+        video_id = int(getattr(request, "videoId", 0) or 0)
+        return base_seed + (video_id * 100_000) + (segment_index * 1_000) + candidate_index
+
     def _resolve_output_upscale(self, backend_params: dict[str, object]) -> float | None:
         raw_value = (
             backend_params.get("output_upscale")
@@ -703,6 +718,22 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
         if scale in {1.5, 2.0}:
             return scale
         return None
+
+    def _resolve_strip_audio(self, backend_params: dict[str, object]) -> bool:
+        raw_value = (
+            backend_params.get("strip_audio")
+            or backend_params.get("stripAudio")
+            or backend_params.get("remove_audio")
+            or backend_params.get("removeAudio")
+        )
+        if raw_value is None:
+            return self._settings.strip_generated_audio
+        text = str(raw_value).strip().lower()
+        if text in {"0", "false", "no", "off", "disabled", "none"}:
+            return False
+        if text in {"1", "true", "yes", "on", "enabled"}:
+            return True
+        return self._settings.strip_generated_audio
 
     def _post_upscale_output(
         self,
@@ -774,7 +805,10 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
     ) -> None:
         ffmpeg = self._find_ffmpeg()
         tmp_path = output_path.with_name(f"{output_path.stem}.resized.tmp{output_path.suffix}")
-        scale_filter = f"scale={width}:{height}:flags=lanczos"
+        scale_filter = (
+            f"scale={width}:{height}:force_original_aspect_ratio=increase:flags=lanczos,"
+            f"crop={width}:{height}"
+        )
         command = [
             ffmpeg,
             "-y",
@@ -825,6 +859,56 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
             "stderr": completed.stderr.strip(),
         }
 
+    def _strip_output_audio(
+        self,
+        output_path: Path,
+        debug: dict[str, object],
+    ) -> None:
+        ffmpeg = self._find_ffmpeg()
+        tmp_path = output_path.with_name(f"{output_path.stem}.silent.tmp{output_path.suffix}")
+        command = [
+            ffmpeg,
+            "-y",
+            "-i",
+            output_path.as_posix(),
+            "-map",
+            "0:v:0",
+            "-c:v",
+            "copy",
+            "-an",
+            "-movflags",
+            "+faststart",
+            tmp_path.as_posix(),
+        ]
+        completed = subprocess.run(
+            command,
+            cwd=REPO_ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            if tmp_path.exists():
+                tmp_path.unlink()
+            raise RuntimeError(
+                "\n".join(
+                    item
+                    for item in [
+                        f"Audio stripping failed for {output_path.name}.",
+                        completed.stdout.strip(),
+                        completed.stderr.strip(),
+                    ]
+                    if item
+                )
+            )
+        tmp_path.replace(output_path)
+        debug["audioStripped"] = {
+            "enabled": True,
+            "ffmpeg": ffmpeg,
+            "stdout": completed.stdout.strip(),
+            "stderr": completed.stderr.strip(),
+        }
+
     def _find_ffmpeg(self) -> str:
         ffmpeg = shutil.which("ffmpeg")
         if ffmpeg:
@@ -859,8 +943,11 @@ class LtxNativeAdapter(BaseGeneratorAdapter):
         return frames
 
     def _normalize_dimension(self, value: int) -> int:
+        value = int(value)
         value = max(self._spec.resolution_multiple, value)
-        value = value - (value % self._spec.resolution_multiple)
+        remainder = value % self._spec.resolution_multiple
+        if remainder:
+            value += self._spec.resolution_multiple - remainder
         return value or self._spec.resolution_multiple
 
     def _run_command(
