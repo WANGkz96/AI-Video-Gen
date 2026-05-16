@@ -141,14 +141,16 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
         self._set_primitive_int(prompt, "Height", request.height)
         self._set_primitive_int(prompt, "Duration", max(1, int(round(request.durationSec))))
         self._set_primitive_int(prompt, "Frame Rate", max(1, int(round(request.fps))))
+        self._set_text_to_video_switch(prompt, enabled=not use_i2v)
         self._set_noise_seed(prompt, seed)
         self._add_save_video_node(prompt, output_prefix)
 
         uploaded_image = None
+        image_wiring = None
         if use_i2v:
             assert request.imagePath is not None
             uploaded_image = await self._upload_image(client, request)
-            self._wire_uploaded_image(prompt, uploaded_image["loadImageValue"])
+            image_wiring = self._wire_uploaded_image(prompt, uploaded_image["loadImageValue"])
 
         debug = {
             "workflowPath": workflow_path.as_posix(),
@@ -162,6 +164,7 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
                 "durationSec": request.durationSec,
             },
             "injectedControls": self._collect_injected_controls(prompt),
+            "imageWiring": image_wiring,
             "payload": self.build_workflow_payload(request),
         }
         return prompt, workflow_kind, uploaded_image, debug
@@ -329,6 +332,14 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
         if not found:
             raise AdapterUnavailableError(f"ComfyUI workflow does not expose PrimitiveInt '{title}'.")
 
+    def _set_text_to_video_switch(self, prompt: dict[str, dict], enabled: bool) -> None:
+        for node in prompt.values():
+            if node.get("class_type") != "PrimitiveBoolean":
+                continue
+            title = str((node.get("_meta") or {}).get("title") or "")
+            if "Text to Video" in title:
+                node.setdefault("inputs", {})["value"] = bool(enabled)
+
     def _set_noise_seed(self, prompt: dict[str, dict], seed: int) -> None:
         offset = 0
         for node in prompt.values():
@@ -345,21 +356,36 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
             inputs = node.get("inputs") or {}
             if title in {"Width", "Height", "Duration", "Frame Rate", "Prompt"}:
                 controls[str(title)] = dict(inputs)
+            if node.get("class_type") == "PrimitiveBoolean" and "Text to Video" in str(title or ""):
+                controls[str(title)] = dict(inputs)
             if node.get("class_type") == "RandomNoise":
                 controls.setdefault("RandomNoise", []).append(inputs.get("noise_seed"))
         return controls
 
-    def _wire_uploaded_image(self, prompt: dict[str, dict], load_image_value: str) -> None:
+    def _wire_uploaded_image(self, prompt: dict[str, dict], load_image_value: str) -> dict[str, object]:
         load_node_id = self._next_node_id(prompt)
         prompt[load_node_id] = {
             "inputs": {"image": load_image_value},
             "class_type": "LoadImage",
             "_meta": {"title": "AI Video Gen First Frame"},
         }
-        for node in prompt.values():
+        wired_nodes: list[dict[str, object]] = []
+        for node_id, node in prompt.items():
             if node.get("class_type") == "ResizeImageMaskNode":
                 node.setdefault("inputs", {})["input"] = [load_node_id, 0]
-                return
+                wired_nodes.append(
+                    {
+                        "nodeId": node_id,
+                        "title": (node.get("_meta") or {}).get("title"),
+                        "input": [load_node_id, 0],
+                    }
+                )
+        if wired_nodes:
+            return {
+                "loadImageNodeId": load_node_id,
+                "loadImageValue": load_image_value,
+                "wiredResizeNodes": wired_nodes,
+            }
         raise AdapterUnavailableError("ComfyUI I2V workflow does not expose ResizeImageMaskNode input.")
 
     def _add_save_video_node(self, prompt: dict[str, dict], output_prefix: str) -> None:
