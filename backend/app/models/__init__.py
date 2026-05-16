@@ -236,7 +236,7 @@ class GenerationArtifact(BaseSchema):
 
 
 class DirectGenerationRequest(BaseSchema):
-    backend: str = "mock-gen"
+    backend: str = "comfyui-ltx23"
     title: str = "Manual generation"
     promptLanguage: str = "en"
     prompt: str

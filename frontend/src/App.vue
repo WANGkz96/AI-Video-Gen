@@ -67,17 +67,9 @@ type HealthPayload = {
 
 const health = ref<HealthPayload | null>(null);
 const backends = ref<BackendInfo[]>([]);
-const selectedBatchBackend = ref("mock-gen");
-const selectedBatchOutputUpscale = ref("");
+const selectedBatchBackend = ref("comfyui-ltx23");
 const batchFile = ref<File | null>(null);
-const selectedDirectBackend = ref("mock-gen");
-const selectedDirectOutputUpscale = ref("");
-const outputUpscaleOptions = [
-  { value: "", label: "Server default" },
-  { value: "off", label: "Off" },
-  { value: "1.5x", label: "1.5x" },
-  { value: "2x", label: "2x" },
-];
+const selectedDirectBackend = ref("comfyui-ltx23");
 const directForm = ref({
   title: "Manual generation",
   prompt: "A dynamic futuristic city with cinematic motion and clear subject focus.",
@@ -90,7 +82,6 @@ const directForm = ref({
   width: 720,
   height: 1280,
   fps: 24,
-  numInferenceSteps: 8,
   seed: 42,
   globalVisualDirection: "Portrait frame, cinematic realism, warm lighting.",
   globalNegativePrompt: "text overlays, artifacts, deformation",
@@ -156,14 +147,6 @@ function chooseBatchFile(event: Event) {
   batchFile.value = target.files?.[0] ?? null;
 }
 
-function withOutputUpscale(baseParams: Record<string, unknown>, selectedOutputUpscale: string) {
-  const params = { ...baseParams };
-  if (selectedOutputUpscale) {
-    params.outputUpscale = selectedOutputUpscale;
-  }
-  return params;
-}
-
 async function loadBootstrap() {
   const [healthResponse, backendResponse] = await Promise.all([
     fetch("/api/health"),
@@ -190,10 +173,6 @@ async function startBatchJob() {
     const form = new FormData();
     form.append("batch", batchFile.value);
     form.append("backend", selectedBatchBackend.value);
-    const backendParams = withOutputUpscale({}, selectedBatchOutputUpscale.value);
-    if (Object.keys(backendParams).length > 0) {
-      form.append("backendParams", JSON.stringify(backendParams));
-    }
     const response = await fetch("/api/jobs", { method: "POST", body: form });
     const payload = await response.json();
     if (!response.ok) {
@@ -217,13 +196,9 @@ async function startDirectJob() {
       body: JSON.stringify({
         backend: selectedDirectBackend.value,
         ...directForm.value,
-        backendParams: withOutputUpscale(
-          {
-            num_inference_steps: directForm.value.numInferenceSteps,
-            seed: directForm.value.seed,
-          },
-          selectedDirectOutputUpscale.value,
-        ),
+        backendParams: {
+          seed: directForm.value.seed,
+        },
       }),
     });
     const payload = await response.json();
@@ -315,7 +290,7 @@ onBeforeUnmount(() => {
       </div>
       <div class="hero-status">
         <span class="status-pill">{{ health?.status ?? "..." }}</span>
-        <p>Default backend: <strong>{{ health?.defaultBackend ?? "mock-gen" }}</strong></p>
+        <p>Default backend: <strong>{{ health?.defaultBackend ?? "comfyui-ltx23" }}</strong></p>
         <p>Queue: <strong>{{ health?.queuedJobs ?? 0 }}</strong></p>
       </div>
     </section>
@@ -331,14 +306,6 @@ onBeforeUnmount(() => {
           <select v-model="selectedBatchBackend">
             <option v-for="backend in backends" :key="backend.key" :value="backend.key" :disabled="!backend.available">
               {{ backend.label }} · {{ backend.status }}
-            </option>
-          </select>
-        </label>
-        <label class="field">
-          <span>Output upscaler</span>
-          <select v-model="selectedBatchOutputUpscale">
-            <option v-for="option in outputUpscaleOptions" :key="option.value || 'default'" :value="option.value">
-              {{ option.label }}
             </option>
           </select>
         </label>
@@ -370,14 +337,6 @@ onBeforeUnmount(() => {
           </label>
         </div>
         <label class="field">
-          <span>Output upscaler</span>
-          <select v-model="selectedDirectOutputUpscale">
-            <option v-for="option in outputUpscaleOptions" :key="option.value || 'default'" :value="option.value">
-              {{ option.label }}
-            </option>
-          </select>
-        </label>
-        <label class="field">
           <span>Prompt</span>
           <textarea v-model="directForm.prompt" rows="3" />
         </label>
@@ -397,7 +356,6 @@ onBeforeUnmount(() => {
           <label class="field"><span>Height</span><input v-model.number="directForm.height" type="number" min="64" step="1" /></label>
         </div>
         <div class="field-grid">
-          <label class="field"><span>Inference Steps</span><input v-model.number="directForm.numInferenceSteps" type="number" min="1" step="1" /></label>
           <label class="field"><span>Seed</span><input v-model.number="directForm.seed" type="number" min="0" step="1" /></label>
         </div>
         <button class="cta cta--ink" :disabled="busy" @click="startDirectJob">Запустить direct job</button>

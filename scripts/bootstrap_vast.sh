@@ -3,8 +3,10 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV_DIR="${ROOT_DIR}/.venv"
-MODELS="${MODELS:-ltx-2.3-distilled}"
-GENERATOR_BACKEND="${GENERATOR_BACKEND:-ltx-2.3-distilled}"
+MODELS="${MODELS:-}"
+GENERATOR_BACKEND="${GENERATOR_BACKEND:-comfyui-ltx23}"
+GENERATOR_API_URL="${GENERATOR_API_URL:-http://127.0.0.1:18188}"
+AI_VIDEO_GEN_DOWNLOAD_COMFY_MODELS="${AI_VIDEO_GEN_DOWNLOAD_COMFY_MODELS:-0}"
 PORT="${PORT:-8080}"
 CORS_ORIGINS="${CORS_ORIGINS:-http://127.0.0.1:${PORT},http://localhost:${PORT}}"
 PYTHON_BIN="${PYTHON_BIN:-}"
@@ -86,17 +88,21 @@ write_env_value() {
 write_runtime_env() {
   write_env_value "PORT" "${PORT}"
   write_env_value "GENERATOR_BACKEND" "${GENERATOR_BACKEND}"
+  write_env_value "GENERATOR_API_URL" "${GENERATOR_API_URL}"
   write_env_value "CORS_ORIGINS" "${CORS_ORIGINS}"
   write_env_value "SEGMENT_VARIANTS" "${SEGMENT_VARIANTS:-2}"
   write_env_value "VIDEO_DURATION_SEC" "${VIDEO_DURATION_SEC:-8}"
   write_env_value "PORTRAIT_RESOLUTION" "${PORTRAIT_RESOLUTION:-720x1280}"
   write_env_value "LANDSCAPE_RESOLUTION" "${LANDSCAPE_RESOLUTION:-1280x720}"
   write_env_value "OUTPUT_UPSCALE" "${OUTPUT_UPSCALE:-off}"
-  write_env_value "LTX_OFFLOAD" "${LTX_OFFLOAD:-none}"
-  write_env_value "LTX_INPUT_IMAGE_ARG_NAME" "${LTX_INPUT_IMAGE_ARG_NAME:-}"
-  write_env_value "LTX_IMAGE_FRAME_INDEX" "${LTX_IMAGE_FRAME_INDEX:-0}"
-  write_env_value "LTX_IMAGE_STRENGTH" "${LTX_IMAGE_STRENGTH:-0.85}"
-  write_env_value "LTX_IMAGE_CRF" "${LTX_IMAGE_CRF:-}"
+  write_env_value "COMFYUI_ROOT" "${COMFYUI_ROOT:-/workspace/ComfyUI}"
+  write_env_value "COMFYUI_T2V_WORKFLOW" "${COMFYUI_T2V_WORKFLOW:-/workspace/ComfyUI/blueprints/Text to Video (LTX-2.3).json}"
+  write_env_value "COMFYUI_I2V_WORKFLOW" "${COMFYUI_I2V_WORKFLOW:-/workspace/ComfyUI/blueprints/Image to Video (LTX-2.3).json}"
+  write_env_value "COMFYUI_OUTPUT_PREFIX" "${COMFYUI_OUTPUT_PREFIX:-video/AI_Video_Gen}"
+  write_env_value "COMFYUI_STRIP_AUDIO" "${COMFYUI_STRIP_AUDIO:-1}"
+  write_env_value "AI_VIDEO_GEN_DOWNLOAD_COMFY_MODELS" "${AI_VIDEO_GEN_DOWNLOAD_COMFY_MODELS}"
+  write_env_value "ENABLE_LEGACY_BACKENDS" "${ENABLE_LEGACY_BACKENDS:-0}"
+  write_env_value "ENABLE_MOCK_BACKEND" "${ENABLE_MOCK_BACKEND:-0}"
   if [ -n "${HF_TOKEN:-}" ]; then
     write_env_value "HF_TOKEN" "${HF_TOKEN}"
   fi
@@ -122,8 +128,7 @@ fi
 source "${VENV_DIR}/bin/activate"
 
 python -m pip install --upgrade pip "setuptools<82" wheel
-python -m pip install --index-url https://download.pytorch.org/whl/cu128 torch torchvision torchaudio
-python -m pip install -e ".[models]"
+python -m pip install -e "."
 
 ensure_nodejs
 if command -v npm >/dev/null 2>&1; then
@@ -134,7 +139,12 @@ if [ ! -f .env ]; then
   cp .env.example .env
 fi
 write_runtime_env
-python -m backend.app.cli download-models --models "${MODELS}"
+if [ -n "${MODELS}" ] && [ "${AI_VIDEO_GEN_DOWNLOAD_MODELS:-0}" = "1" ]; then
+  python -m backend.app.cli download-models --models "${MODELS}"
+fi
+if [ "${AI_VIDEO_GEN_DOWNLOAD_COMFY_MODELS}" = "1" ]; then
+  python scripts/download_comfy_ltx23_models.py --comfy-root "${COMFYUI_ROOT:-/workspace/ComfyUI}"
+fi
 
 echo "Bootstrap complete."
 echo "Run with:"

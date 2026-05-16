@@ -238,20 +238,23 @@ class JobService:
                 runtime.subscribers.remove(queue)
 
     def _build_registry(self) -> dict[str, BaseGeneratorAdapter]:
+        comfy_adapter = ComfyUiWorkflowAdapter(self._settings)
         registry: dict[str, BaseGeneratorAdapter] = {
-            "mock-gen": MockGenAdapter(self._settings.mock_media_dir),
-            "comfyui-workflow": ComfyUiWorkflowAdapter(self._settings.generator_api_url),
+            comfy_adapter.key: comfy_adapter,
         }
-        registry.update(build_real_model_registry(self._settings))
+        if self._settings.enable_mock_backend or self._settings.generator_backend == "mock-gen":
+            registry["mock-gen"] = MockGenAdapter(self._settings.mock_media_dir)
+        if self._settings.enable_legacy_backends:
+            registry.update(build_real_model_registry(self._settings))
         registry["ltx-video-2"] = PlannedAdapter(
             "ltx-video-2",
             "LTX Video 2",
-            "Use 'ltx-2.3-distilled' instead.",
+            "Use 'comfyui-ltx23' instead.",
         )
         registry["ltx-video-2-distilled"] = PlannedAdapter(
             "ltx-video-2-distilled",
             "LTX Video 2 Distilled",
-            "Use 'ltx-2.3-distilled' instead.",
+            "Use 'comfyui-ltx23' instead.",
         )
         registry["hunyuan-video"] = PlannedAdapter(
             "hunyuan-video",
