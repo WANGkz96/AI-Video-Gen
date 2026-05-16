@@ -6,6 +6,7 @@ import json
 import shutil
 from pathlib import Path
 
+from backend.app.adapters.comfyui import ComfyUiWorkflowAdapter
 from backend.app.adapters.base import AdapterUnavailableError, BaseGeneratorAdapter
 from backend.app.adapters.registry import build_real_model_registry, get_downloadable_backend_keys
 from backend.app.config import Settings
@@ -57,7 +58,9 @@ def parse_model_selection(raw: str) -> list[str]:
     return keys
 
 
-def build_real_model_adapter(settings: Settings, backend: str) -> BaseGeneratorAdapter:
+def build_generation_adapter(settings: Settings, backend: str) -> BaseGeneratorAdapter:
+    if backend == ComfyUiWorkflowAdapter.key:
+        return ComfyUiWorkflowAdapter(settings)
     registry = build_real_model_registry(settings)
     try:
         return registry[backend]
@@ -67,7 +70,7 @@ def build_real_model_adapter(settings: Settings, backend: str) -> BaseGeneratorA
 
 async def run_smoke_test(args: argparse.Namespace) -> None:
     settings = Settings.from_env()
-    adapter = build_real_model_adapter(settings, args.backend)
+    adapter = build_generation_adapter(settings, args.backend)
     smoke_dir = settings.temp_dir / "smoke-tests"
     smoke_dir.mkdir(parents=True, exist_ok=True)
     output_path = smoke_dir / f"{args.backend}_{compact_timestamp()}.mp4"
@@ -107,7 +110,7 @@ async def run_smoke_test(args: argparse.Namespace) -> None:
 
 async def run_serialized_segment(args: argparse.Namespace) -> None:
     settings = Settings.from_env()
-    adapter = build_real_model_adapter(settings, args.backend)
+    adapter = build_generation_adapter(settings, args.backend)
     request = SegmentGenerationRequest.model_validate_json(
         Path(args.request_file).read_text(encoding="utf-8")
     )
@@ -172,7 +175,7 @@ def run_downloads(args: argparse.Namespace) -> None:
     settings = Settings.from_env()
     selected = parse_model_selection(args.models)
     for key in selected:
-        adapter = build_real_model_adapter(settings, key)
+        adapter = build_generation_adapter(settings, key)
         info = adapter.info()
         print(f"[{key}] {info.modelId} -> {info.localPath}")
         if not hasattr(adapter, "download_assets"):

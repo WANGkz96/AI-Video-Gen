@@ -71,6 +71,17 @@ def _parse_ltx_offload(value: str | None) -> str | None:
     return None
 
 
+def _parse_bool(value: str | None, fallback: bool = False) -> bool:
+    text = str(value if value is not None else "").strip().lower()
+    if not text:
+        return fallback
+    if text in {"1", "true", "yes", "on", "enabled"}:
+        return True
+    if text in {"0", "false", "no", "off", "disabled", "none"}:
+        return False
+    return fallback
+
+
 @dataclass(slots=True)
 class Settings:
     port: int
@@ -82,6 +93,13 @@ class Settings:
     models_dir: Path
     generator_backend: str
     generator_api_url: str
+    comfyui_t2v_workflow: Path
+    comfyui_i2v_workflow: Path
+    comfyui_output_prefix: str
+    comfyui_strip_audio: bool
+    comfyui_normalize_output: bool
+    enable_legacy_backends: bool
+    enable_mock_backend: bool
     max_parallel_segments: int
     segment_variants: int
     video_duration_sec: float
@@ -118,8 +136,25 @@ class Settings:
             temp_dir=temp_dir,
             ltx_runtime_repo_dir=ltx_runtime_repo_dir,
             models_dir=models_dir,
-            generator_backend=os.getenv("GENERATOR_BACKEND", "mock-gen"),
-            generator_api_url=os.getenv("GENERATOR_API_URL", "http://localhost:8188"),
+            generator_backend=os.getenv("GENERATOR_BACKEND", "comfyui-ltx23"),
+            generator_api_url=os.getenv("GENERATOR_API_URL", "http://127.0.0.1:18188"),
+            comfyui_t2v_workflow=Path(
+                os.getenv(
+                    "COMFYUI_T2V_WORKFLOW",
+                    "/workspace/ComfyUI/blueprints/Text to Video (LTX-2.3).json",
+                )
+            ).resolve(),
+            comfyui_i2v_workflow=Path(
+                os.getenv(
+                    "COMFYUI_I2V_WORKFLOW",
+                    "/workspace/ComfyUI/blueprints/Image to Video (LTX-2.3).json",
+                )
+            ).resolve(),
+            comfyui_output_prefix=os.getenv("COMFYUI_OUTPUT_PREFIX", "video/AI_Video_Gen"),
+            comfyui_strip_audio=_parse_bool(os.getenv("COMFYUI_STRIP_AUDIO"), True),
+            comfyui_normalize_output=_parse_bool(os.getenv("COMFYUI_NORMALIZE_OUTPUT"), True),
+            enable_legacy_backends=_parse_bool(os.getenv("ENABLE_LEGACY_BACKENDS"), False),
+            enable_mock_backend=_parse_bool(os.getenv("ENABLE_MOCK_BACKEND"), False),
             max_parallel_segments=max(1, int(os.getenv("MAX_PARALLEL_SEGMENTS", "1"))),
             segment_variants=max(1, int(os.getenv("SEGMENT_VARIANTS", "4"))),
             video_duration_sec=max(1.0, float(os.getenv("VIDEO_DURATION_SEC", "8"))),

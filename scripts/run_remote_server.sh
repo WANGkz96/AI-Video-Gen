@@ -3,13 +3,14 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${PORT:-8090}"
-BACKEND="${GENERATOR_BACKEND:-ltx-2.3-distilled}"
+BACKEND="${GENERATOR_BACKEND:-comfyui-ltx23}"
+GENERATOR_API_URL="${GENERATOR_API_URL:-http://127.0.0.1:18188}"
 CORS="${CORS_ORIGINS:-http://127.0.0.1:8080,http://localhost:8080}"
 
 mkdir -p "${ROOT_DIR}/.run"
 pkill -f "uvicorn backend.app.main:app .* --port ${PORT}" || true
 
-nohup env PORT="${PORT}" GENERATOR_BACKEND="${BACKEND}" CORS_ORIGINS="${CORS}" \
+nohup env PORT="${PORT}" GENERATOR_BACKEND="${BACKEND}" GENERATOR_API_URL="${GENERATOR_API_URL}" CORS_ORIGINS="${CORS}" \
   bash "${ROOT_DIR}/scripts/start_vast.sh" \
   > "${ROOT_DIR}/.run/backend.out.log" \
   2> "${ROOT_DIR}/.run/backend.err.log" \
