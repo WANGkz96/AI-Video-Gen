@@ -4,6 +4,7 @@ import asyncio
 import json
 import mimetypes
 import os
+import secrets
 import shutil
 import subprocess
 import time
@@ -72,8 +73,8 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
             output_info = self._extract_video_output(history)
             await self._download_output(client, output_info, request.outputPath)
 
-        if self._settings.comfyui_strip_audio:
-            await asyncio.to_thread(self._strip_output_audio, request.outputPath, debug)
+        if self._settings.comfyui_normalize_output or self._settings.comfyui_strip_audio:
+            await asyncio.to_thread(self._postprocess_output, request.outputPath, request, debug)
 
         debug.update(
             {
@@ -160,6 +161,7 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
                 "fps": request.fps,
                 "durationSec": request.durationSec,
             },
+            "injectedControls": self._collect_injected_controls(prompt),
             "payload": self.build_workflow_payload(request),
         }
         return prompt, workflow_kind, uploaded_image, debug
@@ -336,6 +338,17 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
         if offset == 0:
             raise AdapterUnavailableError("ComfyUI workflow does not expose RandomNoise seed nodes.")
 
+    def _collect_injected_controls(self, prompt: dict[str, dict]) -> dict[str, object]:
+        controls: dict[str, object] = {}
+        for node in prompt.values():
+            title = (node.get("_meta") or {}).get("title")
+            inputs = node.get("inputs") or {}
+            if title in {"Width", "Height", "Duration", "Frame Rate", "Prompt"}:
+                controls[str(title)] = dict(inputs)
+            if node.get("class_type") == "RandomNoise":
+                controls.setdefault("RandomNoise", []).append(inputs.get("noise_seed"))
+        return controls
+
     def _wire_uploaded_image(self, prompt: dict[str, dict], load_image_value: str) -> None:
         load_node_id = self._next_node_id(prompt)
         prompt[load_node_id] = {
@@ -372,10 +385,15 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
     def _resolve_seed(self, request: SegmentGenerationRequest) -> int:
         params = request.backendParams or {}
         if params.get("seed") not in {None, ""}:
-            return int(params["seed"])
-        base_seed = int(os.environ.get("COMFYUI_SEED", "42"))
+            base_seed = int(params["seed"])
+            candidate_index = int(params.get("candidateIndex") or 0)
+            return base_seed + ((max(1, int(request.segmentIndex)) - 1) * 1_000) + max(0, candidate_index - 1)
+        if os.environ.get("COMFYUI_SEED") not in {None, ""}:
+            base_seed = int(os.environ["COMFYUI_SEED"])
+            candidate_index = int(params.get("candidateIndex") or 0)
+            return base_seed + (int(request.videoId) * 100_000) + (int(request.segmentIndex) * 1_000) + candidate_index
         candidate_index = int(params.get("candidateIndex") or 0)
-        return base_seed + (int(request.videoId) * 100_000) + (int(request.segmentIndex) * 1_000) + candidate_index
+        return secrets.randbelow(900_000_000_000_000) + candidate_index
 
     def _build_output_prefix(self, request: SegmentGenerationRequest) -> str:
         candidate_index = int((request.backendParams or {}).get("candidateIndex") or 1)
@@ -396,12 +414,26 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
     def _safe_filename(self, value: str) -> str:
         return "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in value)[:180]
 
-    def _strip_output_audio(self, output_path: Path, debug: dict[str, object]) -> None:
+    def _postprocess_output(
+        self,
+        output_path: Path,
+        request: SegmentGenerationRequest,
+        debug: dict[str, object],
+    ) -> None:
         ffmpeg = shutil.which("ffmpeg")
         if not ffmpeg:
-            debug["audioStripped"] = {"enabled": False, "reason": "ffmpeg_not_found"}
+            debug["outputPostprocess"] = {"enabled": False, "reason": "ffmpeg_not_found"}
             return
-        tmp_path = output_path.with_name(f"{output_path.stem}.silent.tmp{output_path.suffix}")
+
+        filters: list[str] = []
+        if self._settings.comfyui_normalize_output:
+            filters.append(
+                f"scale={int(request.width)}:{int(request.height)}:flags=lanczos"
+            )
+            filters.append(f"fps={max(1, float(request.fps))}")
+            filters.append("setsar=1")
+
+        tmp_path = output_path.with_name(f"{output_path.stem}.post.tmp{output_path.suffix}")
         command = [
             ffmpeg,
             "-y",
@@ -409,13 +441,25 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
             output_path.as_posix(),
             "-map",
             "0:v:0",
-            "-c:v",
-            "copy",
-            "-an",
-            "-movflags",
-            "+faststart",
-            tmp_path.as_posix(),
         ]
+        if filters:
+            command.extend([
+                "-vf",
+                ",".join(filters),
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-crf",
+                "18",
+                "-pix_fmt",
+                "yuv420p",
+            ])
+        else:
+            command.extend(["-c:v", "copy"])
+        if self._settings.comfyui_strip_audio:
+            command.append("-an")
+        command.extend(["-movflags", "+faststart", tmp_path.as_posix()])
         completed = subprocess.run(
             command,
             cwd=REPO_ROOT,
@@ -430,7 +474,7 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
                 "\n".join(
                     item
                     for item in [
-                        f"Audio stripping failed for {output_path.name}.",
+                        f"Output postprocess failed for {output_path.name}.",
                         completed.stdout.strip(),
                         completed.stderr.strip(),
                     ]
@@ -438,9 +482,18 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
                 )
             )
         tmp_path.replace(output_path)
-        debug["audioStripped"] = {
+        debug["outputPostprocess"] = {
             "enabled": True,
             "ffmpeg": ffmpeg,
+            "normalizeOutput": self._settings.comfyui_normalize_output,
+            "targetWidth": request.width,
+            "targetHeight": request.height,
+            "targetFps": request.fps,
+            "stripAudio": self._settings.comfyui_strip_audio,
             "stdout": completed.stdout.strip(),
             "stderr": completed.stderr.strip(),
+        }
+        debug["audioStripped"] = {
+            "enabled": self._settings.comfyui_strip_audio,
+            "via": "outputPostprocess",
         }

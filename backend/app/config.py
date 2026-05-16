@@ -97,6 +97,7 @@ class Settings:
     comfyui_i2v_workflow: Path
     comfyui_output_prefix: str
     comfyui_strip_audio: bool
+    comfyui_normalize_output: bool
     enable_legacy_backends: bool
     enable_mock_backend: bool
     max_parallel_segments: int
@@ -151,6 +152,7 @@ class Settings:
             ).resolve(),
             comfyui_output_prefix=os.getenv("COMFYUI_OUTPUT_PREFIX", "video/AI_Video_Gen"),
             comfyui_strip_audio=_parse_bool(os.getenv("COMFYUI_STRIP_AUDIO"), True),
+            comfyui_normalize_output=_parse_bool(os.getenv("COMFYUI_NORMALIZE_OUTPUT"), True),
             enable_legacy_backends=_parse_bool(os.getenv("ENABLE_LEGACY_BACKENDS"), False),
             enable_mock_backend=_parse_bool(os.getenv("ENABLE_MOCK_BACKEND"), False),
             max_parallel_segments=max(1, int(os.getenv("MAX_PARALLEL_SEGMENTS", "1"))),

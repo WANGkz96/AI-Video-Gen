@@ -100,6 +100,7 @@ write_runtime_env() {
   write_env_value "COMFYUI_I2V_WORKFLOW" "${COMFYUI_I2V_WORKFLOW:-/workspace/ComfyUI/blueprints/Image to Video (LTX-2.3).json}"
   write_env_value "COMFYUI_OUTPUT_PREFIX" "${COMFYUI_OUTPUT_PREFIX:-video/AI_Video_Gen}"
   write_env_value "COMFYUI_STRIP_AUDIO" "${COMFYUI_STRIP_AUDIO:-1}"
+  write_env_value "COMFYUI_NORMALIZE_OUTPUT" "${COMFYUI_NORMALIZE_OUTPUT:-1}"
   write_env_value "AI_VIDEO_GEN_DOWNLOAD_COMFY_MODELS" "${AI_VIDEO_GEN_DOWNLOAD_COMFY_MODELS}"
   write_env_value "ENABLE_LEGACY_BACKENDS" "${ENABLE_LEGACY_BACKENDS:-0}"
   write_env_value "ENABLE_MOCK_BACKEND" "${ENABLE_MOCK_BACKEND:-0}"
