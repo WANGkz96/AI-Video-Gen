@@ -11,6 +11,20 @@ PORT="${PORT:-8080}"
 CORS_ORIGINS="${CORS_ORIGINS:-http://127.0.0.1:${PORT},http://localhost:${PORT}}"
 PYTHON_BIN="${PYTHON_BIN:-}"
 
+case "${GENERATOR_BACKEND}" in
+  comfyui-ltx23)
+    ;;
+  ltx-2.3-distilled|ltx23-distilled|ltx-native|ltx-2.3|wan2.2-ti2v-5b)
+    echo "Legacy GENERATOR_BACKEND='${GENERATOR_BACKEND}' detected; using comfyui-ltx23."
+    GENERATOR_BACKEND="comfyui-ltx23"
+    ;;
+esac
+
+if [ "${AI_VIDEO_GEN_FORCE_LTX23_DISTILLED:-0}" = "1" ]; then
+  echo "Ignoring legacy AI_VIDEO_GEN_FORCE_LTX23_DISTILLED=1; generation is handled by ComfyUI."
+  GENERATOR_BACKEND="comfyui-ltx23"
+fi
+
 ensure_apt_packages() {
   if ! command -v apt-get >/dev/null 2>&1; then
     return 0

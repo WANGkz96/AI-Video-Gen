@@ -140,8 +140,10 @@ The script:
 3. builds the Vue frontend;
 4. downloads missing ComfyUI model files when `AI_VIDEO_GEN_DOWNLOAD_COMFY_MODELS=1`;
 5. verifies that every required ComfyUI model file exists and is non-empty;
-6. waits for the ComfyUI API and `/workflow/convert` to accept both LTX 2.3 workflows;
-7. starts AI-Video-Gen on `PORT`.
+6. starts a background readiness watcher;
+7. returns from provisioning so the Vast ComfyUI entrypoint can start ComfyUI;
+8. the watcher waits for the ComfyUI API and `/workflow/convert` to accept both LTX 2.3 workflows;
+9. the watcher starts AI-Video-Gen on `PORT`.
 
 AI-Video-Gen deliberately does not start before steps 5 and 6 pass. The
 `localhost:8090` portal entry therefore becomes a coarse readiness indicator:
