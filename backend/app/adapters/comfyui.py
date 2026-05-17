@@ -468,6 +468,8 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
             "-map",
             "0:v:0",
         ]
+        if not self._settings.comfyui_strip_audio:
+            command.extend(["-map", "0:a?"])
         if filters:
             command.extend([
                 "-vf",
@@ -485,6 +487,8 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
             command.extend(["-c:v", "copy"])
         if self._settings.comfyui_strip_audio:
             command.append("-an")
+        else:
+            command.extend(["-c:a", "copy"])
         command.extend(["-movflags", "+faststart", tmp_path.as_posix()])
         completed = subprocess.run(
             command,

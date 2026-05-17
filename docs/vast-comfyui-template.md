@@ -37,8 +37,8 @@ COMFYUI_ROOT=/workspace/ComfyUI
 COMFYUI_T2V_WORKFLOW=/workspace/ComfyUI/blueprints/Text to Video (LTX-2.3).json
 COMFYUI_I2V_WORKFLOW=/workspace/ComfyUI/blueprints/Image to Video (LTX-2.3).json
 COMFYUI_OUTPUT_PREFIX=video/AI_Video_Gen
-COMFYUI_STRIP_AUDIO=1
-COMFYUI_NORMALIZE_OUTPUT=1
+COMFYUI_STRIP_AUDIO=0
+COMFYUI_NORMALIZE_OUTPUT=0
 AI_VIDEO_GEN_DOWNLOAD_COMFY_MODELS=1
 ENABLE_LEGACY_BACKENDS=0
 ENABLE_MOCK_BACKEND=0
@@ -107,6 +107,10 @@ Lightricks/LTX-2.3:
   ltx-2.3-22b-distilled-lora-384.safetensors
   -> /workspace/ComfyUI/models/loras/ltx-2.3-22b-distilled-lora-384.safetensors
 
+Comfy-Org/ltx-2:
+  split_files/loras/gemma-3-12b-it-abliterated_lora_rank64_bf16.safetensors
+  -> /workspace/ComfyUI/models/loras/gemma-3-12b-it-abliterated_lora_rank64_bf16.safetensors
+
 Lightricks/LTX-2.3:
   ltx-2.3-spatial-upscaler-x2-1.1.safetensors
   -> /workspace/ComfyUI/models/latent_upscale_models/ltx-2.3-spatial-upscaler-x2-1.1.safetensors
@@ -135,7 +139,14 @@ The script:
 2. installs the backend into a local venv;
 3. builds the Vue frontend;
 4. downloads missing ComfyUI model files when `AI_VIDEO_GEN_DOWNLOAD_COMFY_MODELS=1`;
-5. starts AI-Video-Gen on `PORT`.
+5. verifies that every required ComfyUI model file exists and is non-empty;
+6. waits for the ComfyUI API and `/workflow/convert` to accept both LTX 2.3 workflows;
+7. starts AI-Video-Gen on `PORT`.
+
+AI-Video-Gen deliberately does not start before steps 5 and 6 pass. The
+`localhost:8090` portal entry therefore becomes a coarse readiness indicator:
+if the web app opens, the required model files, workflows, and ComfyUI converter
+endpoint are ready.
 
 ## Health Checks
 

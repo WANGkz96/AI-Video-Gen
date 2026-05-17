@@ -151,8 +151,8 @@ class Settings:
                 )
             ).resolve(),
             comfyui_output_prefix=os.getenv("COMFYUI_OUTPUT_PREFIX", "video/AI_Video_Gen"),
-            comfyui_strip_audio=_parse_bool(os.getenv("COMFYUI_STRIP_AUDIO"), True),
-            comfyui_normalize_output=_parse_bool(os.getenv("COMFYUI_NORMALIZE_OUTPUT"), True),
+            comfyui_strip_audio=_parse_bool(os.getenv("COMFYUI_STRIP_AUDIO"), False),
+            comfyui_normalize_output=_parse_bool(os.getenv("COMFYUI_NORMALIZE_OUTPUT"), False),
             enable_legacy_backends=_parse_bool(os.getenv("ENABLE_LEGACY_BACKENDS"), False),
             enable_mock_backend=_parse_bool(os.getenv("ENABLE_MOCK_BACKEND"), False),
             max_parallel_segments=max(1, int(os.getenv("MAX_PARALLEL_SEGMENTS", "1"))),

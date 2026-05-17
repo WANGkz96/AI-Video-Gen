@@ -99,8 +99,8 @@ write_runtime_env() {
   write_env_value "COMFYUI_T2V_WORKFLOW" "${COMFYUI_T2V_WORKFLOW:-/workspace/ComfyUI/blueprints/Text to Video (LTX-2.3).json}"
   write_env_value "COMFYUI_I2V_WORKFLOW" "${COMFYUI_I2V_WORKFLOW:-/workspace/ComfyUI/blueprints/Image to Video (LTX-2.3).json}"
   write_env_value "COMFYUI_OUTPUT_PREFIX" "${COMFYUI_OUTPUT_PREFIX:-video/AI_Video_Gen}"
-  write_env_value "COMFYUI_STRIP_AUDIO" "${COMFYUI_STRIP_AUDIO:-1}"
-  write_env_value "COMFYUI_NORMALIZE_OUTPUT" "${COMFYUI_NORMALIZE_OUTPUT:-1}"
+  write_env_value "COMFYUI_STRIP_AUDIO" "${COMFYUI_STRIP_AUDIO:-0}"
+  write_env_value "COMFYUI_NORMALIZE_OUTPUT" "${COMFYUI_NORMALIZE_OUTPUT:-0}"
   write_env_value "AI_VIDEO_GEN_DOWNLOAD_COMFY_MODELS" "${AI_VIDEO_GEN_DOWNLOAD_COMFY_MODELS}"
   write_env_value "ENABLE_LEGACY_BACKENDS" "${ENABLE_LEGACY_BACKENDS:-0}"
   write_env_value "ENABLE_MOCK_BACKEND" "${ENABLE_MOCK_BACKEND:-0}"
@@ -143,8 +143,12 @@ write_runtime_env
 if [ -n "${MODELS}" ] && [ "${AI_VIDEO_GEN_DOWNLOAD_MODELS:-0}" = "1" ]; then
   python -m backend.app.cli download-models --models "${MODELS}"
 fi
-if [ "${AI_VIDEO_GEN_DOWNLOAD_COMFY_MODELS}" = "1" ]; then
-  python scripts/download_comfy_ltx23_models.py --comfy-root "${COMFYUI_ROOT:-/workspace/ComfyUI}"
+if [ "${GENERATOR_BACKEND}" = "comfyui-ltx23" ]; then
+  if [ "${AI_VIDEO_GEN_DOWNLOAD_COMFY_MODELS}" = "1" ]; then
+    python scripts/download_comfy_ltx23_models.py --comfy-root "${COMFYUI_ROOT:-/workspace/ComfyUI}"
+  else
+    python scripts/download_comfy_ltx23_models.py --comfy-root "${COMFYUI_ROOT:-/workspace/ComfyUI}" --verify-only
+  fi
 fi
 
 echo "Bootstrap complete."
