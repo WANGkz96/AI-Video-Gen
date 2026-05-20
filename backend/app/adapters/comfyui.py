@@ -18,6 +18,7 @@ import httpx
 from backend.app.adapters.base import AdapterUnavailableError, BaseGeneratorAdapter
 from backend.app.config import REPO_ROOT, Settings
 from backend.app.models import AdapterInfo, GenerationArtifact, SegmentGenerationRequest
+from backend.app.services.provisioning import missing_comfy_ltx23_model_files
 
 
 class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
@@ -36,11 +37,14 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
             for path in [self._settings.comfyui_t2v_workflow, self._settings.comfyui_i2v_workflow]
             if not path.is_file()
         ]
+        missing_models = [path.as_posix() for path in missing_comfy_ltx23_model_files(self._settings)]
         comfy_error = self._check_comfyui()
-        available = not missing and comfy_error is None
+        available = not missing and not missing_models and comfy_error is None
         notes = None
         if missing:
             notes = "Missing ComfyUI workflow blueprint(s): " + ", ".join(missing)
+        elif missing_models:
+            notes = "Missing required ComfyUI model file(s): " + ", ".join(missing_models)
         elif comfy_error:
             notes = comfy_error
 
@@ -56,7 +60,7 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
             supportsBatch=True,
             supportsDirect=True,
             requiresRemote=True,
-            requiresDownload=False,
+            requiresDownload=bool(missing_models),
             modelId="ComfyUI workflow: video_ltx2_3_t2v / video_ltx2_3_i2v",
             localPath=self._settings.comfyui_t2v_workflow.parent.as_posix(),
             minimumVramGb=32,
