@@ -93,6 +93,7 @@ class Settings:
     models_dir: Path
     generator_backend: str
     generator_api_url: str
+    comfyui_root: Path
     comfyui_t2v_workflow: Path
     comfyui_i2v_workflow: Path
     comfyui_output_prefix: str
@@ -108,6 +109,7 @@ class Settings:
     output_upscale: float | None
     ltx_offload: str | None
     mock_media_dir: Path
+    provisioning_status_file: Path
     hf_token: str | None
     cors_origins: list[str]
     frontend_dist_dir: Path
@@ -128,6 +130,8 @@ class Settings:
             os.getenv("FRONTEND_DIST_DIR", REPO_ROOT / "frontend" / "dist")
         ).resolve()
 
+        comfyui_root = Path(os.getenv("COMFYUI_ROOT", "/workspace/ComfyUI")).resolve()
+
         return cls(
             port=int(os.getenv("PORT", "3001")),
             workdir=workdir,
@@ -138,6 +142,7 @@ class Settings:
             models_dir=models_dir,
             generator_backend=os.getenv("GENERATOR_BACKEND", "comfyui-ltx23"),
             generator_api_url=os.getenv("GENERATOR_API_URL", "http://127.0.0.1:18188"),
+            comfyui_root=comfyui_root,
             comfyui_t2v_workflow=Path(
                 os.getenv(
                     "COMFYUI_T2V_WORKFLOW",
@@ -165,6 +170,9 @@ class Settings:
             ),
             ltx_offload=_parse_ltx_offload(os.getenv("LTX_OFFLOAD")),
             mock_media_dir=Path(os.getenv("MOCK_MEDIA_DIR", REPO_ROOT / "mock-media")).resolve(),
+            provisioning_status_file=Path(
+                os.getenv("AI_VIDEO_GEN_PROVISIONING_STATUS", workdir / "provisioning-status.json")
+            ).resolve(),
             hf_token=os.getenv("HF_TOKEN") or None,
             cors_origins=_parse_origins(
                 os.getenv(

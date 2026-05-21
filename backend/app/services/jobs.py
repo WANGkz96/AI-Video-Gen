@@ -32,6 +32,7 @@ from backend.app.models import (
     VideoInfo,
 )
 from backend.app.services.media import probe_video
+from backend.app.services.provisioning import get_provisioning_status
 
 
 def utc_now() -> datetime:
@@ -87,13 +88,19 @@ class JobService:
             for runtime in self._jobs.values()
             if runtime.snapshot.status in {"queued", "running"}
         )
+        provisioning = get_provisioning_status(self._settings)
         return {
-            "status": "ok",
+            "status": "ok" if provisioning["ready"] else provisioning["status"],
+            "ready": provisioning["ready"],
             "defaultBackend": self._settings.generator_backend,
             "queuedJobs": self._queue.qsize(),
             "activeJobs": active_jobs,
             "frontendBuilt": self._settings.frontend_dist_dir.exists(),
+            "provisioning": provisioning,
         }
+
+    def provisioning(self) -> dict[str, Any]:
+        return get_provisioning_status(self._settings)
 
     def list_backends(self, *, include_unavailable: bool = False) -> list[AdapterInfo]:
         backends = [adapter.info() for adapter in self._adapters.values()]
@@ -187,27 +194,49 @@ class JobService:
         return await self.create_job(payload, backend=request.backend)
 
     def get_job(self, job_id: str) -> JobSnapshot:
-        return self._runtime(job_id).snapshot
+        runtime = self._jobs.get(job_id)
+        if runtime is not None:
+            return runtime.snapshot
+        return self._read_snapshot(job_id)
+
+    def list_jobs(self, *, limit: int = 20) -> list[JobSnapshot]:
+        snapshots: dict[str, JobSnapshot] = {
+            job_id: runtime.snapshot for job_id, runtime in self._jobs.items()
+        }
+        for snapshot_path in self._settings.jobs_dir.glob("*/job.json"):
+            try:
+                snapshot = JobSnapshot.model_validate_json(snapshot_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            snapshots.setdefault(snapshot.jobId, snapshot)
+        return sorted(
+            snapshots.values(),
+            key=lambda snapshot: snapshot.updatedAt,
+            reverse=True,
+        )[: max(1, limit)]
 
     def get_logs(self, job_id: str) -> list[LogEntry]:
-        return list(self._runtime(job_id).logs)
+        runtime = self._jobs.get(job_id)
+        if runtime is not None:
+            return list(runtime.logs)
+        return self._read_logs(job_id)
 
     def get_result(self, job_id: str) -> dict[str, Any]:
-        runtime = self._runtime(job_id)
-        if not runtime.result_path.is_file():
+        result_path = self._result_path(job_id)
+        if not result_path.is_file():
             raise FileNotFoundError("Job result.json is not ready yet.")
-        return json.loads(runtime.result_path.read_text(encoding="utf-8"))
+        return json.loads(result_path.read_text(encoding="utf-8"))
 
     def get_archive_path(self, job_id: str) -> Path:
-        runtime = self._runtime(job_id)
-        if not runtime.archive_path.is_file():
+        archive_path = self._archive_path(job_id)
+        if not archive_path.is_file():
             raise FileNotFoundError("Job archive is not ready yet.")
-        return runtime.archive_path
+        return archive_path
 
     def get_job_file(self, job_id: str, relative_path: str) -> Path:
-        runtime = self._runtime(job_id)
-        target = (runtime.workspace_dir / relative_path).resolve()
-        workspace = runtime.workspace_dir.resolve()
+        workspace = self._workspace_dir(job_id)
+        target = (workspace / relative_path).resolve()
+        workspace = workspace.resolve()
         if workspace not in target.parents and target != workspace:
             raise PermissionError("Requested path is outside the job workspace.")
         if not target.is_file():
@@ -215,7 +244,14 @@ class JobService:
         return target
 
     async def stream_events(self, job_id: str):
-        runtime = self._runtime(job_id)
+        runtime = self._jobs.get(job_id)
+        if runtime is None:
+            snapshot = self._read_snapshot(job_id)
+            yield {"type": "snapshot", "data": snapshot.model_dump(mode="json")}
+            for log in self._read_logs(job_id):
+                yield {"type": "log", "data": log.model_dump(mode="json")}
+            return
+
         yield {"type": "snapshot", "data": runtime.snapshot.model_dump(mode="json")}
         for log in runtime.logs:
             yield {"type": "log", "data": log.model_dump(mode="json")}
@@ -285,6 +321,66 @@ class JobService:
         if runtime is None:
             raise KeyError(job_id)
         return runtime
+
+    def _workspace_dir(self, job_id: str) -> Path:
+        runtime = self._jobs.get(job_id)
+        if runtime is not None:
+            return runtime.workspace_dir
+        workspace = (self._settings.jobs_dir / job_id).resolve()
+        jobs_root = self._settings.jobs_dir.resolve()
+        if workspace != jobs_root and jobs_root not in workspace.parents:
+            raise KeyError(job_id)
+        if not (workspace / "job.json").is_file():
+            raise KeyError(job_id)
+        return workspace
+
+    def _read_snapshot(self, job_id: str) -> JobSnapshot:
+        snapshot_path = self._workspace_dir(job_id) / "job.json"
+        return JobSnapshot.model_validate_json(snapshot_path.read_text(encoding="utf-8"))
+
+    def _read_logs(self, job_id: str) -> list[LogEntry]:
+        logs_path = self._workspace_dir(job_id) / "logs.jsonl"
+        if not logs_path.is_file():
+            return []
+        entries: list[LogEntry] = []
+        for line in logs_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            entries.append(LogEntry.model_validate_json(line))
+        return entries
+
+    def _result_path(self, job_id: str) -> Path:
+        runtime = self._jobs.get(job_id)
+        if runtime is not None:
+            return runtime.result_path
+        workspace = self._workspace_dir(job_id)
+        snapshot = self._read_snapshot(job_id)
+        relative_path = snapshot.resultFile or "result.json"
+        return self._resolve_job_relative_path(workspace, relative_path)
+
+    def _archive_path(self, job_id: str) -> Path:
+        runtime = self._jobs.get(job_id)
+        if runtime is not None:
+            return runtime.archive_path
+        snapshot = self._read_snapshot(job_id)
+        if snapshot.archiveFile:
+            return Path(snapshot.archiveFile)
+        return self._settings.archive_dir / f"{job_id}.zip"
+
+    def _resolve_job_relative_path(self, workspace: Path, relative_path: str) -> Path:
+        normalized = str(relative_path or "").replace("\\", "/").lstrip("./").strip()
+        if (
+            not normalized
+            or normalized.startswith("/")
+            or ":" in normalized.split("/", 1)[0]
+            or any(part == ".." for part in normalized.split("/"))
+        ):
+            raise FileNotFoundError(relative_path)
+        target = (workspace / normalized).resolve()
+        workspace = workspace.resolve()
+        if workspace not in target.parents and target != workspace:
+            raise FileNotFoundError(relative_path)
+        return target
 
     def _parse_batch_upload(
         self,

@@ -44,6 +44,11 @@ async def health(jobs: JobService = Depends(get_jobs)):
     return jobs.health()
 
 
+@app.get("/api/provisioning")
+async def provisioning(jobs: JobService = Depends(get_jobs)):
+    return jobs.provisioning()
+
+
 @app.get("/api/backends")
 async def list_backends(
     include_unavailable: bool = Query(default=False, alias="includeUnavailable"),
@@ -95,6 +100,14 @@ async def create_job(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=400, detail=f"Invalid JSON payload: {exc}") from exc
+
+
+@app.get("/api/jobs", response_model=list[JobSnapshot])
+async def list_jobs(
+    limit: int = Query(default=20, ge=1, le=100),
+    jobs: JobService = Depends(get_jobs),
+):
+    return jobs.list_jobs(limit=limit)
 
 
 @app.post("/api/jobs/direct", response_model=JobQueuedResponse)

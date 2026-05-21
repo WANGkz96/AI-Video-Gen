@@ -7,6 +7,7 @@ MODELS="${MODELS:-}"
 GENERATOR_BACKEND="${GENERATOR_BACKEND:-comfyui-ltx23}"
 GENERATOR_API_URL="${GENERATOR_API_URL:-http://127.0.0.1:18188}"
 AI_VIDEO_GEN_DOWNLOAD_COMFY_MODELS="${AI_VIDEO_GEN_DOWNLOAD_COMFY_MODELS:-0}"
+AI_VIDEO_GEN_PROVISIONING_STATUS="${AI_VIDEO_GEN_PROVISIONING_STATUS:-${ROOT_DIR}/data/provisioning-status.json}"
 PORT="${PORT:-8080}"
 CORS_ORIGINS="${CORS_ORIGINS:-http://127.0.0.1:${PORT},http://localhost:${PORT}}"
 PYTHON_BIN="${PYTHON_BIN:-}"
@@ -116,6 +117,7 @@ write_runtime_env() {
   write_env_value "COMFYUI_STRIP_AUDIO" "${COMFYUI_STRIP_AUDIO:-0}"
   write_env_value "COMFYUI_NORMALIZE_OUTPUT" "${COMFYUI_NORMALIZE_OUTPUT:-0}"
   write_env_value "AI_VIDEO_GEN_DOWNLOAD_COMFY_MODELS" "${AI_VIDEO_GEN_DOWNLOAD_COMFY_MODELS}"
+  write_env_value "AI_VIDEO_GEN_PROVISIONING_STATUS" "${AI_VIDEO_GEN_PROVISIONING_STATUS}"
   write_env_value "ENABLE_LEGACY_BACKENDS" "${ENABLE_LEGACY_BACKENDS:-0}"
   write_env_value "ENABLE_MOCK_BACKEND" "${ENABLE_MOCK_BACKEND:-0}"
   if [ -n "${HF_TOKEN:-}" ]; then
@@ -157,12 +159,10 @@ write_runtime_env
 if [ -n "${MODELS}" ] && [ "${AI_VIDEO_GEN_DOWNLOAD_MODELS:-0}" = "1" ]; then
   python -m backend.app.cli download-models --models "${MODELS}"
 fi
-if [ "${GENERATOR_BACKEND}" = "comfyui-ltx23" ]; then
-  if [ "${AI_VIDEO_GEN_DOWNLOAD_COMFY_MODELS}" = "1" ]; then
-    python scripts/download_comfy_ltx23_models.py --comfy-root "${COMFYUI_ROOT:-/workspace/ComfyUI}"
-  else
-    python scripts/download_comfy_ltx23_models.py --comfy-root "${COMFYUI_ROOT:-/workspace/ComfyUI}" --verify-only
-  fi
+if [ "${GENERATOR_BACKEND}" = "comfyui-ltx23" ] && [ "${AI_VIDEO_GEN_SYNC_MODEL_DOWNLOAD:-0}" = "1" ]; then
+  python scripts/download_comfy_ltx23_models.py \
+    --comfy-root "${COMFYUI_ROOT:-/workspace/ComfyUI}" \
+    --status-file "${AI_VIDEO_GEN_PROVISIONING_STATUS}"
 fi
 
 echo "Bootstrap complete."
