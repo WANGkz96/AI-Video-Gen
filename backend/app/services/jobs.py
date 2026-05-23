@@ -841,7 +841,6 @@ class JobService:
                 1280,
             )
         )
-        fps = float(self._pick_profile_value(profiles, ("fps", "frameRate"), 24.0))
         if width > height:
             width, height = self._settings.landscape_resolution
         elif height > width:
@@ -853,7 +852,19 @@ class JobService:
                 backend_params.update(params)
         if job_backend_params:
             backend_params.update(job_backend_params)
+        fps = self._resolve_generation_fps(backend_params)
         return width, height, fps, backend_params
+
+    def _resolve_generation_fps(self, backend_params: dict[str, Any]) -> float:
+        for key in ("fps", "frameRate"):
+            value = backend_params.get(key)
+            if value is None:
+                continue
+            try:
+                return max(1.0, float(value))
+            except (TypeError, ValueError):
+                continue
+        return max(1.0, float(self._settings.video_fps))
 
     def _collect_profiles(self, *candidates: dict[str, Any]) -> list[dict[str, Any]]:
         profiles: list[dict[str, Any]] = []
@@ -998,6 +1009,7 @@ class JobService:
         exported_at = utc_now().isoformat()
         run_id = request.runId or compact_timestamp()
         segment_id = f"{run_id}_{request.variantKey}_s01"
+        direct_backend_params = {**request.backendParams, "fps": request.fps}
         return {
             "schemaVersion": "video-pipeline.external-generation.batch.v1",
             "exportedAt": exported_at,
@@ -1019,7 +1031,7 @@ class JobService:
                         "width": request.width,
                         "height": request.height,
                         "fps": request.fps,
-                        "backendParams": request.backendParams,
+                        "backendParams": direct_backend_params,
                     },
                     "deliveryProfile": {},
                     "subtitleStyle": {},
@@ -1054,7 +1066,7 @@ class JobService:
                                         "width": request.width,
                                         "height": request.height,
                                         "fps": request.fps,
-                                        "backendParams": request.backendParams,
+                                        "backendParams": direct_backend_params,
                                     },
                                     "deliveryProfile": {},
                                 },

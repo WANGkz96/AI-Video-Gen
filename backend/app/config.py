@@ -104,6 +104,7 @@ class Settings:
     max_parallel_segments: int
     segment_variants: int
     video_duration_sec: float
+    video_fps: float
     portrait_resolution: tuple[int, int]
     landscape_resolution: tuple[int, int]
     output_upscale: float | None
@@ -163,6 +164,7 @@ class Settings:
             max_parallel_segments=max(1, int(os.getenv("MAX_PARALLEL_SEGMENTS", "1"))),
             segment_variants=max(1, int(os.getenv("SEGMENT_VARIANTS", "4"))),
             video_duration_sec=max(1.0, float(os.getenv("VIDEO_DURATION_SEC", "8"))),
+            video_fps=max(1.0, float(os.getenv("VIDEO_FPS", "25"))),
             portrait_resolution=_parse_resolution(os.getenv("PORTRAIT_RESOLUTION", "720x1280"), (720, 1280)),
             landscape_resolution=_parse_resolution(os.getenv("LANDSCAPE_RESOLUTION", "1280x720"), (1280, 720)),
             output_upscale=_parse_output_upscale(
