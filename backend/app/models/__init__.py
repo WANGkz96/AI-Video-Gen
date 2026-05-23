@@ -221,7 +221,7 @@ class SegmentGenerationRequest(BaseSchema):
     resolvedNegativePrompt: str = ""
     width: int = 720
     height: int = 1280
-    fps: float = 24.0
+    fps: float = 25.0
     durationSec: float = 8.0
     outputPath: Path
     backendParams: dict[str, Any] = Field(default_factory=dict)
@@ -248,7 +248,7 @@ class DirectGenerationRequest(BaseSchema):
     durationSec: float = 8.0
     width: int = 720
     height: int = 1280
-    fps: float = 24.0
+    fps: float = 25.0
     videoId: int = 1
     projectId: int = 1
     runId: str | None = None
