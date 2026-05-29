@@ -119,15 +119,15 @@ class JobService:
         selected_backend = backend or self._settings.generator_backend
         job_backend_params = dict(backend_params or {})
         self._ensure_backend_can_run(selected_backend)
-        generation_multiplier = self._settings.segment_variants
         total_videos = len(batch.videos)
         total_variants = sum(len(video.variants) for video in batch.videos)
         total_segments = sum(
             len(variant.manifest.segments)
+            * self._resolve_segment_variant_count(batch, video, variant.manifest)
             for video in batch.videos
             for variant in video.variants
             if variant.manifest is not None
-        ) * generation_multiplier
+        )
 
         job_id = self._next_job_id()
         workspace_dir = self._settings.jobs_dir / job_id
@@ -315,6 +315,130 @@ class JobService:
         info = self._adapters[backend].info()
         if not info.available:
             raise AdapterUnavailableError(info.notes or f"Backend '{backend}' is unavailable.")
+
+    def _positive_int(
+        self,
+        value: Any,
+        fallback: int,
+        *,
+        min_value: int = 1,
+        max_value: int | None = None,
+    ) -> int:
+        try:
+            number = int(float(value))
+        except (TypeError, ValueError):
+            return fallback
+        if number < min_value:
+            return fallback
+        if max_value is not None:
+            number = min(max_value, number)
+        return number
+
+    def _positive_float(
+        self,
+        value: Any,
+        fallback: float,
+        *,
+        min_value: float = 1.0,
+        max_value: float | None = None,
+    ) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return fallback
+        if number < min_value:
+            return fallback
+        if max_value is not None:
+            number = min(max_value, number)
+        return number
+
+    def _first_positive_int(
+        self,
+        candidates: list[Any],
+        fallback: int,
+        *,
+        max_value: int | None = None,
+    ) -> int:
+        for candidate in candidates:
+            resolved = self._positive_int(candidate, 0, max_value=max_value)
+            if resolved > 0:
+                return resolved
+        return self._positive_int(fallback, fallback, max_value=max_value)
+
+    def _first_positive_float(
+        self,
+        candidates: list[Any],
+        fallback: float,
+        *,
+        max_value: float | None = None,
+    ) -> float:
+        for candidate in candidates:
+            resolved = self._positive_float(candidate, 0.0, max_value=max_value)
+            if resolved > 0:
+                return resolved
+        return self._positive_float(fallback, fallback, max_value=max_value)
+
+    def _resolve_segment_variant_count(
+        self,
+        batch: BatchExport,
+        video: VideoInfo | None = None,
+        manifest: VariantManifest | None = None,
+    ) -> int:
+        request_snapshot = (
+            video.requestSnapshot
+            if video is not None and isinstance(video.requestSnapshot, dict)
+            else {}
+        )
+        return self._first_positive_int(
+            [
+                getattr(getattr(manifest, "generationSettings", None), "segmentVariantCount", None),
+                getattr(manifest, "segmentVariantCount", None),
+                getattr(getattr(video, "generationSettings", None), "segmentVariantCount", None),
+                request_snapshot.get("deferred_generation_variant_count"),
+                request_snapshot.get("segmentVariantCount"),
+                request_snapshot.get("segment_variant_count"),
+                getattr(getattr(batch, "generationSettings", None), "segmentVariantCount", None),
+                self._settings.segment_variants,
+            ],
+            fallback=2,
+            max_value=16,
+        )
+
+    def _resolve_segment_duration_sec(
+        self,
+        batch: BatchExport,
+        video: VideoInfo,
+        manifest: VariantManifest,
+        segment: ManifestSegment,
+    ) -> float:
+        request_snapshot = video.requestSnapshot if isinstance(video.requestSnapshot, dict) else {}
+        return self._first_positive_float(
+            [
+                getattr(getattr(manifest, "generationSettings", None), "segmentDurationSec", None),
+                getattr(manifest, "segmentDurationSec", None),
+                getattr(getattr(video, "generationSettings", None), "segmentDurationSec", None),
+                request_snapshot.get("deferred_generation_segment_duration_sec"),
+                request_snapshot.get("segmentDurationSec"),
+                request_snapshot.get("segment_duration_sec"),
+                getattr(getattr(batch, "generationSettings", None), "segmentDurationSec", None),
+                getattr(getattr(segment, "timeline", None), "generationDurationSec", None),
+                self._settings.video_duration_sec,
+            ],
+            fallback=8.0,
+            max_value=30.0,
+        )
+
+    def _select_image_candidate(self, segment: ManifestSegment, candidate_index: int) -> Any | None:
+        candidates = getattr(segment.generation, "imageCandidates", None)
+        if not isinstance(candidates, list) or not candidates:
+            return None
+
+        for candidate in candidates:
+            if self._positive_int(getattr(candidate, "candidateIndex", None), 0) == candidate_index:
+                return candidate
+
+        list_index = min(max(candidate_index - 1, 0), len(candidates) - 1)
+        return candidates[list_index]
 
     def _runtime(self, job_id: str) -> JobRuntime:
         runtime = self._jobs.get(job_id)
@@ -545,20 +669,25 @@ class JobService:
     ) -> None:
         manifest = variant.manifest
         assert manifest is not None
+        segment_variant_count = self._resolve_segment_variant_count(runtime.batch, video, manifest)
 
         for segment in sorted(manifest.segments, key=lambda item: item.segmentIndex):
             await self._log(
                 runtime,
                 "info",
-                f"[{video.videoId}/{variant.key}] Segment {segment.segmentIndex} -> {segment.segmentId}",
+                (
+                    f"[{video.videoId}/{variant.key}] Segment {segment.segmentIndex} "
+                    f"-> {segment.segmentId} ({segment_variant_count} candidates)"
+                ),
             )
             segment_entry: dict[str, Any] = {
                 "segmentId": segment.segmentId,
+                "segmentVariantCount": segment_variant_count,
                 "candidates": [],
             }
             variant_entry["segments"].append(segment_entry)
             try:
-                for candidate_index in range(1, self._settings.segment_variants + 1):
+                for candidate_index in range(1, segment_variant_count + 1):
                     request = self._build_segment_request(
                         runtime,
                         video,
@@ -623,7 +752,10 @@ class JobService:
                     await self._log(
                         runtime,
                         "info",
-                        f"Segment {segment.segmentId} candidate {candidate_index} completed via {artifact.modelName}.",
+                        (
+                            f"Segment {segment.segmentId} candidate {candidate_index} "
+                            f"completed via {artifact.modelName}."
+                        ),
                     )
             except Exception as exc:
                 segment_entry.update({"status": "failed", "error": str(exc)})
@@ -740,8 +872,13 @@ class JobService:
         segment: ManifestSegment,
         candidate_index: int = 1,
     ) -> SegmentGenerationRequest:
-        width, height, fps, backend_params = self._resolve_render_settings(video, manifest, runtime.backend_params)
-        duration_sec = float(self._settings.video_duration_sec or segment.timeline.generationDurationSec or manifest.segmentDurationSec or 8)
+        width, height, fps, backend_params = self._resolve_render_settings(
+            video,
+            manifest,
+            runtime.backend_params,
+        )
+        segment_variant_count = self._resolve_segment_variant_count(runtime.batch, video, manifest)
+        duration_sec = self._resolve_segment_duration_sec(runtime.batch, video, manifest, segment)
         output_path = (
             runtime.workspace_dir
             / "videos"
@@ -751,10 +888,34 @@ class JobService:
             / f"c{candidate_index:02d}.mp4"
         )
         prompt = segment.generation.prompt or ""
-        image_prompt = segment.generation.imagePrompt or prompt
+        image_candidate = self._select_image_candidate(segment, candidate_index)
+        candidate_image_prompt = (
+            str(getattr(image_candidate, "prompt", "") or "").strip()
+            if image_candidate
+            else ""
+        )
+        image_prompt = candidate_image_prompt or segment.generation.imagePrompt or prompt
         image = segment.generation.image if isinstance(segment.generation.image, dict) else {}
-        image_file = segment.generation.imageFile or image.get("file") or image.get("path") or None
-        image_mime_type = segment.generation.imageMimeType or image.get("mimeType") or image.get("mime_type") or None
+        candidate_image_file = (
+            getattr(image_candidate, "file", None)
+            or getattr(image_candidate, "path", None)
+            or None
+        ) if image_candidate else None
+        candidate_image_mime_type = getattr(image_candidate, "mimeType", None) if image_candidate else None
+        image_file = (
+            candidate_image_file
+            or segment.generation.imageFile
+            or image.get("file")
+            or image.get("path")
+            or None
+        )
+        image_mime_type = (
+            candidate_image_mime_type
+            or segment.generation.imageMimeType
+            or image.get("mimeType")
+            or image.get("mime_type")
+            or None
+        )
         image_path = self._resolve_input_file(runtime, image_file) if image_file else None
         negative_prompt = segment.generation.negativePrompt or ""
         resolved_prompt = "\n".join(
@@ -807,7 +968,12 @@ class JobService:
             backendParams={
                 **backend_params,
                 "candidateIndex": candidate_index,
-                "segmentVariants": self._settings.segment_variants,
+                "segmentVariants": segment_variant_count,
+                "imageCandidateIndex": self._positive_int(
+                    getattr(image_candidate, "candidateIndex", None),
+                    candidate_index,
+                    max_value=segment_variant_count,
+                ) if image_candidate else candidate_index,
                 "image": image_path.as_posix() if image_path else None,
                 "sourceImage": image_file,
                 "imageMimeType": image_mime_type,
@@ -1010,12 +1176,17 @@ class JobService:
         run_id = request.runId or compact_timestamp()
         segment_id = f"{run_id}_{request.variantKey}_s01"
         direct_backend_params = {**request.backendParams, "fps": request.fps}
+        direct_generation_settings = {
+            "segmentVariantCount": self._settings.segment_variants,
+            "segmentDurationSec": request.durationSec,
+        }
         return {
             "schemaVersion": "video-pipeline.external-generation.batch.v1",
             "exportedAt": exported_at,
             "filters": {"projectId": request.projectId, "videoId": request.videoId, "status": "manual"},
             "totalVideos": 1,
             "totalVariants": 1,
+            "generationSettings": direct_generation_settings,
             "videos": [
                 {
                     "videoId": request.videoId,
@@ -1036,6 +1207,7 @@ class JobService:
                     "deliveryProfile": {},
                     "subtitleStyle": {},
                     "requestSnapshot": {},
+                    "generationSettings": direct_generation_settings,
                     "variants": [
                         {
                             "key": request.variantKey,
@@ -1055,6 +1227,8 @@ class JobService:
                                 "targetDurationSec": request.durationSec,
                                 "speechDurationSec": request.durationSec,
                                 "segmentDurationSec": request.durationSec,
+                                "segmentVariantCount": self._settings.segment_variants,
+                                "generationSettings": direct_generation_settings,
                                 "totalSegments": 1,
                                 "projectContext": {
                                     "videoName": request.title,

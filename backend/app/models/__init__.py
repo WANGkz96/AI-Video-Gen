@@ -42,6 +42,19 @@ class SubtitleSegmentItem(BaseSchema):
     end: float
 
 
+class GenerationSettings(BaseSchema):
+    segmentVariantCount: int | None = None
+    segmentDurationSec: float | None = None
+
+
+class ImageCandidate(BaseSchema):
+    candidateIndex: int = 1
+    file: str | None = None
+    path: str | None = None
+    mimeType: str | None = None
+    prompt: str = ""
+
+
 class SegmentTimeline(BaseSchema):
     startSec: float
     endSec: float
@@ -63,6 +76,7 @@ class SegmentGeneration(BaseSchema):
     imageFile: str | None = None
     imageMimeType: str | None = None
     image: dict[str, Any] = Field(default_factory=dict)
+    imageCandidates: list[ImageCandidate] = Field(default_factory=list)
     negativePrompt: str = ""
     continuityNote: str = ""
     shotGoal: str = ""
@@ -102,7 +116,9 @@ class VariantManifest(BaseSchema):
     promptLanguage: str = "en"
     targetDurationSec: float
     speechDurationSec: float
-    segmentDurationSec: float = 8
+    segmentDurationSec: float | None = None
+    segmentVariantCount: int | None = None
+    generationSettings: GenerationSettings = Field(default_factory=GenerationSettings)
     totalSegments: int
     projectContext: ProjectContext = Field(default_factory=ProjectContext)
     globalVisualDirection: str = ""
@@ -135,6 +151,7 @@ class VideoInfo(BaseSchema):
     deliveryProfile: dict[str, Any] = Field(default_factory=dict)
     subtitleStyle: dict[str, Any] = Field(default_factory=dict)
     requestSnapshot: dict[str, Any] = Field(default_factory=dict)
+    generationSettings: GenerationSettings = Field(default_factory=GenerationSettings)
     variants: list[VariantInfo] = Field(default_factory=list)
 
 
@@ -144,6 +161,7 @@ class BatchExport(BaseSchema):
     filters: BatchFilters
     totalVideos: int
     totalVariants: int
+    generationSettings: GenerationSettings = Field(default_factory=GenerationSettings)
     videos: list[VideoInfo] = Field(default_factory=list)
 
 

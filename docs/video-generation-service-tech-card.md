@@ -34,6 +34,10 @@ Top-level schema:
   },
   "totalVideos": 1,
   "totalVariants": 1,
+  "generationSettings": {
+    "segmentVariantCount": 2,
+    "segmentDurationSec": 8
+  },
   "videos": [
     {
       "videoId": 123,
@@ -57,6 +61,10 @@ Top-level schema:
       "deliveryProfile": {},
       "subtitleStyle": {},
       "requestSnapshot": {},
+      "generationSettings": {
+        "segmentVariantCount": 2,
+        "segmentDurationSec": 8
+      },
       "variants": [
         {
           "key": "v01",
@@ -93,6 +101,11 @@ Manifest schema:
   "targetDurationSec": 88,
   "speechDurationSec": 86.2,
   "segmentDurationSec": 8,
+  "segmentVariantCount": 2,
+  "generationSettings": {
+    "segmentVariantCount": 2,
+    "segmentDurationSec": 8
+  },
   "totalSegments": 11,
   "projectContext": {
     "videoName": "...",
@@ -133,6 +146,20 @@ Manifest schema:
       },
       "generation": {
         "prompt": "...",
+        "imageCandidates": [
+          {
+            "candidateIndex": 1,
+            "file": "assets/images/..._c01.png",
+            "mimeType": "image/png",
+            "prompt": "..."
+          },
+          {
+            "candidateIndex": 2,
+            "file": "assets/images/..._c02.png",
+            "mimeType": "image/png",
+            "prompt": "..."
+          }
+        ],
         "negativePrompt": "...",
         "continuityNote": "...",
         "shotGoal": "..."
@@ -150,7 +177,7 @@ The service must:
 2. iterate through every `video`;
 3. iterate through every `variant`;
 4. iterate through every `manifest.segments[]` item in `segmentIndex` order;
-5. generate one video file for each segment;
+5. generate `segmentVariantCount` candidate video files for each segment;
 6. keep the original identifiers unchanged:
    - `videoId`
    - `projectId`
@@ -171,12 +198,16 @@ The generator must use:
 - `segment.generation.continuityNote` as a continuity hint;
 - `segment.generation.shotGoal` as the local segment intent;
 - `segment.narration.spokenText` and `segment.narration.wordTimeline` as speech timing context.
+- `segment.generation.imageCandidates[]` as candidate-specific first-frame images when image-first mode is enabled. Candidate `c01` must use `candidateIndex=1`, `c02` must use `candidateIndex=2`, and so on. If no candidate list exists, fall back to legacy `imageFile` / `image`.
 
 The generator must preserve exact segment duration targets:
 
 - default segment duration is `8` seconds;
-- each generated segment should match `timeline.generationDurationSec`;
+- `manifest.generationSettings.segmentDurationSec` / `manifest.segmentDurationSec` is the batch-provided generated clip length;
+- each generated candidate should match that generated clip length;
 - the service must not merge segments into one file.
+
+`SEGMENT_VARIANTS` and `VIDEO_DURATION_SEC` are compatibility fallbacks only. New exports from Video-pipeline must provide `generationSettings` in the batch/manifest, and those batch values take precedence.
 
 ## Recommended Internal API
 

@@ -162,7 +162,7 @@ class Settings:
             enable_legacy_backends=_parse_bool(os.getenv("ENABLE_LEGACY_BACKENDS"), False),
             enable_mock_backend=_parse_bool(os.getenv("ENABLE_MOCK_BACKEND"), False),
             max_parallel_segments=max(1, int(os.getenv("MAX_PARALLEL_SEGMENTS", "1"))),
-            segment_variants=max(1, int(os.getenv("SEGMENT_VARIANTS", "4"))),
+            segment_variants=max(1, int(os.getenv("SEGMENT_VARIANTS", "2"))),
             video_duration_sec=max(1.0, float(os.getenv("VIDEO_DURATION_SEC", "8"))),
             video_fps=max(1.0, float(os.getenv("VIDEO_FPS", "25"))),
             portrait_resolution=_parse_resolution(os.getenv("PORTRAIT_RESOLUTION", "720x1280"), (720, 1280)),

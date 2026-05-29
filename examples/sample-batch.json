@@ -8,6 +8,10 @@
   },
   "totalVideos": 1,
   "totalVariants": 1,
+  "generationSettings": {
+    "segmentVariantCount": 2,
+    "segmentDurationSec": 8
+  },
   "videos": [
     {
       "videoId": 123,
@@ -35,6 +39,10 @@
       "deliveryProfile": {},
       "subtitleStyle": {},
       "requestSnapshot": {},
+      "generationSettings": {
+        "segmentVariantCount": 2,
+        "segmentDurationSec": 8
+      },
       "variants": [
         {
           "key": "v01",
@@ -54,6 +62,11 @@
             "targetDurationSec": 16,
             "speechDurationSec": 15.4,
             "segmentDurationSec": 8,
+            "segmentVariantCount": 2,
+            "generationSettings": {
+              "segmentVariantCount": 2,
+              "segmentDurationSec": 8
+            },
             "totalSegments": 2,
             "projectContext": {
               "videoName": "Mock pipeline demo",
