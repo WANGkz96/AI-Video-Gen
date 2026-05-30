@@ -118,6 +118,10 @@ write_runtime_env() {
   write_env_value "COMFYUI_NORMALIZE_OUTPUT" "${COMFYUI_NORMALIZE_OUTPUT:-0}"
   write_env_value "AI_VIDEO_GEN_DOWNLOAD_COMFY_MODELS" "${AI_VIDEO_GEN_DOWNLOAD_COMFY_MODELS}"
   write_env_value "AI_VIDEO_GEN_PROVISIONING_STATUS" "${AI_VIDEO_GEN_PROVISIONING_STATUS}"
+  write_env_value "AI_VIDEO_GEN_AUTH_REQUIRED" "${AI_VIDEO_GEN_AUTH_REQUIRED:-0}"
+  if [ -n "${AI_VIDEO_GEN_API_TOKEN:-}" ]; then
+    write_env_value "AI_VIDEO_GEN_API_TOKEN" "${AI_VIDEO_GEN_API_TOKEN}"
+  fi
   write_env_value "ENABLE_LEGACY_BACKENDS" "${ENABLE_LEGACY_BACKENDS:-0}"
   write_env_value "ENABLE_MOCK_BACKEND" "${ENABLE_MOCK_BACKEND:-0}"
   if [ -n "${HF_TOKEN:-}" ]; then

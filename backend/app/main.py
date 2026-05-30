@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hmac
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
@@ -33,6 +34,29 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _is_authorized_api_request(request: Request) -> bool:
+    if not settings.ai_video_gen_auth_required:
+        return True
+    if request.method.upper() == "OPTIONS":
+        return True
+    if not request.url.path.startswith("/api/"):
+        return True
+    expected_token = settings.ai_video_gen_api_token or ""
+    header = request.headers.get("authorization", "")
+    prefix = "Bearer "
+    if not header.startswith(prefix):
+        return False
+    supplied_token = header[len(prefix):].strip()
+    return bool(supplied_token) and hmac.compare_digest(supplied_token, expected_token)
+
+
+@app.middleware("http")
+async def api_bearer_auth(request: Request, call_next):
+    if not _is_authorized_api_request(request):
+        return JSONResponse({"detail": "Unauthorized."}, status_code=401)
+    return await call_next(request)
 
 
 def get_jobs() -> JobService:

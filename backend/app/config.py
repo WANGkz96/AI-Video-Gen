@@ -114,6 +114,8 @@ class Settings:
     hf_token: str | None
     cors_origins: list[str]
     frontend_dist_dir: Path
+    ai_video_gen_auth_required: bool
+    ai_video_gen_api_token: str | None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -132,6 +134,10 @@ class Settings:
         ).resolve()
 
         comfyui_root = Path(os.getenv("COMFYUI_ROOT", "/workspace/ComfyUI")).resolve()
+        auth_required = _parse_bool(os.getenv("AI_VIDEO_GEN_AUTH_REQUIRED"), False)
+        api_token = (os.getenv("AI_VIDEO_GEN_API_TOKEN") or "").strip() or None
+        if auth_required and not api_token:
+            raise ValueError("AI_VIDEO_GEN_AUTH_REQUIRED=1 requires AI_VIDEO_GEN_API_TOKEN.")
 
         return cls(
             port=int(os.getenv("PORT", "3001")),
@@ -183,6 +189,8 @@ class Settings:
                 )
             ),
             frontend_dist_dir=frontend_dist_dir,
+            ai_video_gen_auth_required=auth_required,
+            ai_video_gen_api_token=api_token,
         )
 
     def ensure_dirs(self) -> None:
