@@ -9,6 +9,8 @@ frontend/dist/
 frontend/node_modules/
 data/
 mock-media/
+mock-media_backup*/
+tmp/
 models/
 .env
 *.egg-info/
