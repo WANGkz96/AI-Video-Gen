@@ -80,6 +80,9 @@ def _env_float(name: str, fallback: float) -> float:
         return fallback
 
 
+DOWNLOAD_CHUNK_SIZE = max(16 * 1024, _env_int("AI_VIDEO_GEN_MODEL_DOWNLOAD_CHUNK_BYTES", 256 * 1024))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Download the ComfyUI LTX 2.3 workflow model files into a ComfyUI tree."
@@ -188,6 +191,64 @@ def parse_total_size(response: httpx.Response, starting_bytes: int) -> int | Non
     return None
 
 
+def read_auth_headers() -> dict[str, str]:
+    headers = {}
+    token = os.getenv("HF_TOKEN") or os.getenv("HUGGING_FACE_HUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def probe_remote_size(
+    client: httpx.Client,
+    model: ComfyModelFile,
+    base_url: str,
+) -> int | None:
+    url = model_url(model, base_url=base_url)
+    headers = read_auth_headers()
+    try:
+        response = client.head(url, headers=headers)
+        if response.status_code < 400:
+            content_length = response.headers.get("content-length")
+            if content_length and content_length.isdigit():
+                return int(content_length)
+    except Exception:
+        pass
+
+    headers = {**headers, "Range": "bytes=0-0"}
+    try:
+        with client.stream("GET", url, headers=headers) as response:
+            if response.status_code < 400:
+                return parse_total_size(response, 0)
+    except Exception:
+        return None
+    return None
+
+
+def discover_model_sizes(
+    comfy_root: Path,
+    base_urls: list[str],
+    *,
+    connect_timeout: float,
+    read_timeout: float,
+) -> dict[str, int]:
+    sizes: dict[str, int] = {}
+    for model in MODEL_FILES:
+        target = model_target_path(model, comfy_root)
+        if is_ready(target):
+            sizes[model.id] = file_size(target)
+            continue
+        tmp_size = file_size(target.with_suffix(f"{target.suffix}.tmp"))
+        timeout = httpx.Timeout(timeout=read_timeout, connect=connect_timeout)
+        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+            for base_url in base_urls:
+                size = probe_remote_size(client, model, base_url)
+                if size:
+                    sizes[model.id] = max(size, tmp_size)
+                    break
+    return sizes
+
+
 def write_json_atomic(path: Path | None, payload: dict) -> None:
     if path is None:
         return
@@ -204,23 +265,28 @@ def build_model_states(
     current_status: str | None = None,
     current_bytes: int | None = None,
     current_total: int | None = None,
+    expected_total_by_model: dict[str, int] | None = None,
     error_by_model: dict[str, str] | None = None,
 ) -> list[dict]:
     errors = error_by_model or {}
+    expected_sizes = expected_total_by_model or {}
     states: list[dict] = []
     for model in MODEL_FILES:
         target_path = model_target_path(model, comfy_root)
         downloaded = file_size(target_path)
         tmp_downloaded = file_size(target_path.with_suffix(f"{target_path.suffix}.tmp"))
+        expected_total = expected_sizes.get(model.id)
         if current_model and current_model.id == model.id:
             downloaded = current_bytes if current_bytes is not None else max(downloaded, tmp_downloaded)
-            total = current_total
+            total = current_total or expected_total
             status = current_status or "downloading"
         else:
-            total = None
+            total = expected_total
             status = "ready" if is_ready(target_path) else "missing"
             if model.id in errors:
                 status = "error"
+            if status == "ready" and not total:
+                total = downloaded
         states.append(
             {
                 "id": model.id,
@@ -257,6 +323,7 @@ def write_status(
     error: str | None = None,
     error_by_model: dict[str, str] | None = None,
     current_url: str | None = None,
+    expected_total_by_model: dict[str, int] | None = None,
 ) -> None:
     models = build_model_states(
         comfy_root,
@@ -264,14 +331,29 @@ def write_status(
         current_status=status if current_model else None,
         current_bytes=current_bytes,
         current_total=current_total,
+        expected_total_by_model=expected_total_by_model,
         error_by_model=error_by_model,
     )
     ready_count = sum(1 for model in models if model["status"] == "ready")
     total_count = len(models)
-    current_ratio = 0.0
-    if current_model and current_total:
-        current_ratio = max(0.0, min(1.0, float(current_bytes or 0) / float(current_total)))
-    if current_index:
+    byte_total = 0
+    byte_downloaded = 0
+    byte_totals_complete = True
+    for model_state in models:
+        model_total = model_state.get("totalBytes")
+        if model_total:
+            model_downloaded = int(model_state.get("bytesDownloaded") or 0)
+            byte_downloaded += min(model_downloaded, int(model_total))
+            byte_total += int(model_total)
+        else:
+            byte_totals_complete = False
+            break
+    if byte_totals_complete and byte_total > 0:
+        progress = (byte_downloaded / byte_total) * 100
+    elif current_index:
+        current_ratio = 0.0
+        if current_model and current_total:
+            current_ratio = max(0.0, min(1.0, float(current_bytes or 0) / float(current_total)))
         progress = ((current_index - 1 + current_ratio) / total_count) * 100
     else:
         progress = (ready_count / total_count) * 100 if total_count else 100.0
@@ -326,6 +408,7 @@ def copy_hf_file_once(
     connect_timeout: float,
     read_timeout: float,
     base_url: str,
+    expected_total_by_model: dict[str, int],
 ) -> None:
     target_dir = comfy_root / model.target_subdir
     target_path = model_target_path(model, comfy_root)
@@ -340,10 +423,7 @@ def copy_hf_file_once(
         return
 
     url = model_url(model, base_url=base_url)
-    headers = {}
-    token = os.getenv("HF_TOKEN") or os.getenv("HUGGING_FACE_HUB_TOKEN")
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
+    headers = read_auth_headers()
 
     tmp_path = target_path.with_suffix(f"{target_path.suffix}.tmp")
     starting_bytes = file_size(tmp_path)
@@ -359,10 +439,11 @@ def copy_hf_file_once(
         current_model=model,
         current_index=current_index,
         current_bytes=starting_bytes,
-        current_total=None,
+        current_total=expected_total_by_model.get(model.id),
         attempt=attempt,
         max_attempts=max_attempts,
         current_url=url,
+        expected_total_by_model=expected_total_by_model,
     )
 
     timeout = httpx.Timeout(timeout=read_timeout, connect=connect_timeout)
@@ -386,6 +467,7 @@ def copy_hf_file_once(
                         max_attempts=max_attempts,
                         starting_bytes=0,
                         url=url,
+                        expected_total_by_model=expected_total_by_model,
                     )
                     return
             write_response_to_file(
@@ -400,6 +482,7 @@ def copy_hf_file_once(
                 max_attempts=max_attempts,
                 starting_bytes=starting_bytes,
                 url=url,
+                expected_total_by_model=expected_total_by_model,
             )
 
 
@@ -416,14 +499,15 @@ def write_response_to_file(
     max_attempts: int,
     starting_bytes: int,
     url: str,
+    expected_total_by_model: dict[str, int],
 ) -> None:
     response.raise_for_status()
-    total_bytes = parse_total_size(response, starting_bytes)
+    total_bytes = parse_total_size(response, starting_bytes) or expected_total_by_model.get(model.id)
     mode = "ab" if response.status_code == 206 and starting_bytes > 0 else "wb"
     downloaded = starting_bytes if mode == "ab" else 0
     last_status_update = 0.0
     with tmp_path.open(mode) as output:
-        for chunk in response.iter_bytes(chunk_size=1024 * 1024):
+        for chunk in response.iter_bytes(chunk_size=DOWNLOAD_CHUNK_SIZE):
             if not chunk:
                 continue
             output.write(chunk)
@@ -443,6 +527,7 @@ def write_response_to_file(
                     attempt=attempt,
                     max_attempts=max_attempts,
                     current_url=url,
+                    expected_total_by_model=expected_total_by_model,
                 )
     tmp_path.replace(target_path)
     print(f"[ready] {target_path}", flush=True)
@@ -461,6 +546,7 @@ def copy_hf_file(
     read_timeout: float,
     error_by_model: dict[str, str],
     base_urls: list[str],
+    expected_total_by_model: dict[str, int],
 ) -> None:
     if is_ready(model_target_path(model, comfy_root)) and not force:
         print(f"[skip] {model_target_path(model, comfy_root)}", flush=True)
@@ -481,6 +567,7 @@ def copy_hf_file(
                 connect_timeout=connect_timeout,
                 read_timeout=read_timeout,
                 base_url=base_url,
+                expected_total_by_model=expected_total_by_model,
             )
             error_by_model.pop(model.id, None)
             return
@@ -490,6 +577,7 @@ def copy_hf_file(
             should_retry = max_attempts == 0 or attempt < max_attempts
             status = "retrying" if should_retry else "error"
             print(f"[{status}] {model.label}: {error}", flush=True)
+            target_path = model_target_path(model, comfy_root)
             write_status(
                 status_file,
                 comfy_root,
@@ -501,13 +589,14 @@ def copy_hf_file(
                 ),
                 current_model=model,
                 current_index=current_index,
-                current_bytes=file_size(model_target_path(model, comfy_root).with_suffix(".safetensors.tmp")),
-                current_total=None,
+                current_bytes=file_size(target_path.with_suffix(f"{target_path.suffix}.tmp")),
+                current_total=expected_total_by_model.get(model.id),
                 attempt=attempt,
                 max_attempts=max_attempts,
                 error=error,
                 error_by_model=error_by_model,
                 current_url=model_url(model, base_url=base_url),
+                expected_total_by_model=expected_total_by_model,
             )
             if not should_retry:
                 raise
@@ -522,12 +611,19 @@ def main() -> None:
     comfy_root.mkdir(parents=True, exist_ok=True)
     error_by_model: dict[str, str] = {}
     base_urls = parse_base_urls(args.base_url)
+    expected_total_by_model = discover_model_sizes(
+        comfy_root,
+        base_urls,
+        connect_timeout=max(1.0, args.connect_timeout),
+        read_timeout=max(1.0, args.read_timeout),
+    )
 
     write_status(
         status_file,
         comfy_root,
         status="verifying",
         message="Checking required LTX 2.3 files.",
+        expected_total_by_model=expected_total_by_model,
     )
 
     if args.verify_only:
@@ -543,12 +639,19 @@ def main() -> None:
                 status="error",
                 message="Required ComfyUI model files are missing.",
                 error="\n".join(path.as_posix() for path in missing),
+                expected_total_by_model=expected_total_by_model,
             )
             raise SystemExit(
                 "Missing required ComfyUI model files:\n"
                 + "\n".join(f"  - {path}" for path in missing)
             )
-        write_status(status_file, comfy_root, status="ready", message="All required LTX 2.3 files are ready.")
+        write_status(
+            status_file,
+            comfy_root,
+            status="ready",
+            message="All required LTX 2.3 files are ready.",
+            expected_total_by_model=expected_total_by_model,
+        )
         return
 
     try:
@@ -565,8 +668,15 @@ def main() -> None:
                 read_timeout=max(1.0, args.read_timeout),
                 error_by_model=error_by_model,
                 base_urls=base_urls,
+                expected_total_by_model=expected_total_by_model,
             )
-        write_status(status_file, comfy_root, status="ready", message="All required LTX 2.3 files are ready.")
+        write_status(
+            status_file,
+            comfy_root,
+            status="ready",
+            message="All required LTX 2.3 files are ready.",
+            expected_total_by_model=expected_total_by_model,
+        )
     except Exception as exc:
         write_status(
             status_file,
@@ -575,6 +685,7 @@ def main() -> None:
             message="Model download failed.",
             error=str(exc),
             error_by_model=error_by_model,
+            expected_total_by_model=expected_total_by_model,
         )
         raise
 
