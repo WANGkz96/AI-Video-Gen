@@ -138,10 +138,11 @@ const logs = ref<LogEntry[]>([]);
 const result = ref<ResultPayload | null>(null);
 const busy = ref(false);
 const errorMessage = ref("");
+const apiToken = ref("");
 let source: EventSource | null = null;
 let readinessTimer: number | undefined;
 
-const appReady = computed(() => Boolean(provisioning.value?.ready));
+const appReady = computed(() => Boolean(provisioning.value?.ready || health.value?.ready));
 
 const provisioningPercent = computed(() =>
   Math.max(0, Math.min(100, Math.round(provisioning.value?.progressPercent ?? 0))),
@@ -186,11 +187,11 @@ const successfulSegments = computed(() => {
 });
 
 const archiveUrl = computed(() =>
-  activeJob.value ? `/api/jobs/${activeJob.value.jobId}/archive` : "",
+  activeJob.value ? apiUrl(`/api/jobs/${activeJob.value.jobId}/archive`) : "",
 );
 
 const resultUrl = computed(() =>
-  activeJob.value ? `/api/jobs/${activeJob.value.jobId}/result` : "",
+  activeJob.value ? apiUrl(`/api/jobs/${activeJob.value.jobId}/result`) : "",
 );
 
 function isTerminalStatus(status: string) {
@@ -215,14 +216,14 @@ function metadataUrl(videoFile: string) {
   if (!activeJob.value) {
     return "#";
   }
-  return `/api/jobs/${activeJob.value.jobId}/files/${videoFile.replace(/\.mp4$/i, ".json")}`;
+  return apiUrl(`/api/jobs/${activeJob.value.jobId}/files/${videoFile.replace(/\.mp4$/i, ".json")}`);
 }
 
 function videoUrl(videoFile: string) {
   if (!activeJob.value) {
     return "#";
   }
-  return `/api/jobs/${activeJob.value.jobId}/files/${videoFile}`;
+  return apiUrl(`/api/jobs/${activeJob.value.jobId}/files/${videoFile}`);
 }
 
 function chooseBatchFile(event: Event) {
@@ -248,12 +249,49 @@ async function readJson<T>(response: Response, fallback: T): Promise<T> {
   }
 }
 
+function initializeApiToken() {
+  const params = new URLSearchParams(window.location.search);
+  const tokenFromUrl = params.get("token")?.trim();
+  const savedToken = window.sessionStorage.getItem("ai-video-gen.apiToken")?.trim();
+  apiToken.value = tokenFromUrl || savedToken || "";
+  if (tokenFromUrl) {
+    window.sessionStorage.setItem("ai-video-gen.apiToken", tokenFromUrl);
+    params.delete("token");
+    const query = params.toString();
+    window.history.replaceState(
+      {},
+      document.title,
+      `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`,
+    );
+  }
+}
+
+function apiUrl(path: string) {
+  if (!apiToken.value) {
+    return path;
+  }
+  const url = new URL(path, window.location.origin);
+  url.searchParams.set("token", apiToken.value);
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
+function apiFetch(path: string, init: RequestInit = {}) {
+  const headers = new Headers(init.headers);
+  if (apiToken.value) {
+    headers.set("Authorization", `Bearer ${apiToken.value}`);
+  }
+  return fetch(apiUrl(path), {
+    ...init,
+    headers,
+  });
+}
+
 async function loadBootstrap() {
   const [healthResponse, provisioningResponse, backendResponse, jobsResponse] = await Promise.all([
-    fetch("/api/health"),
-    fetch("/api/provisioning"),
-    fetch("/api/backends?includeUnavailable=true"),
-    fetch("/api/jobs?limit=20"),
+    apiFetch("/api/health"),
+    apiFetch("/api/provisioning"),
+    apiFetch("/api/backends?includeUnavailable=true"),
+    apiFetch("/api/jobs?limit=20"),
   ]);
   health.value = await readJson<HealthPayload | null>(healthResponse, health.value);
   provisioning.value = await readJson<ProvisioningPayload | null>(provisioningResponse, provisioning.value);
@@ -271,10 +309,10 @@ async function loadBootstrap() {
 async function refreshReadiness() {
   try {
     const [healthResponse, provisioningResponse, backendResponse, jobsResponse] = await Promise.all([
-      fetch("/api/health"),
-      fetch("/api/provisioning"),
-      fetch("/api/backends?includeUnavailable=true"),
-      fetch("/api/jobs?limit=20"),
+      apiFetch("/api/health"),
+      apiFetch("/api/provisioning"),
+      apiFetch("/api/backends?includeUnavailable=true"),
+      apiFetch("/api/jobs?limit=20"),
     ]);
     health.value = await readJson<HealthPayload | null>(healthResponse, health.value);
     provisioning.value = await readJson<ProvisioningPayload | null>(provisioningResponse, provisioning.value);
@@ -345,7 +383,7 @@ async function startBatchJob() {
     const form = new FormData();
     form.append("batch", batchFile.value);
     form.append("backend", selectedBatchBackend.value);
-    const response = await fetch("/api/jobs", { method: "POST", body: form });
+    const response = await apiFetch("/api/jobs", { method: "POST", body: form });
     const payload = await readJson<{ jobId?: string; detail?: string }>(response, {});
     if (!response.ok) {
       throw new Error(payload.detail ?? "Не удалось создать batch job.");
@@ -369,7 +407,7 @@ async function startDirectJob() {
   busy.value = true;
   errorMessage.value = "";
   try {
-    const response = await fetch("/api/jobs/direct", {
+    const response = await apiFetch("/api/jobs/direct", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -408,7 +446,7 @@ async function activateJob(jobId: string) {
 }
 
 async function fetchJob(jobId: string) {
-  const response = await fetch(`/api/jobs/${jobId}`);
+  const response = await apiFetch(`/api/jobs/${jobId}`);
   if (!response.ok) {
     throw new Error("Не удалось загрузить job.");
   }
@@ -416,7 +454,7 @@ async function fetchJob(jobId: string) {
 }
 
 async function fetchLogs(jobId: string) {
-  const response = await fetch(`/api/jobs/${jobId}/logs`);
+  const response = await apiFetch(`/api/jobs/${jobId}/logs`);
   if (!response.ok) {
     throw new Error("Не удалось загрузить логи.");
   }
@@ -424,7 +462,7 @@ async function fetchLogs(jobId: string) {
 }
 
 async function fetchResult(jobId: string) {
-  const response = await fetch(`/api/jobs/${jobId}/result`);
+  const response = await apiFetch(`/api/jobs/${jobId}/result`);
   if (!response.ok) {
     return;
   }
@@ -433,7 +471,7 @@ async function fetchResult(jobId: string) {
 
 function connectEvents(jobId: string) {
   source?.close();
-  source = new EventSource(`/api/jobs/${jobId}/events`);
+  source = new EventSource(apiUrl(`/api/jobs/${jobId}/events`));
   source.onmessage = async (event) => {
     const payload = JSON.parse(event.data) as { type: string; data: unknown };
     if (payload.type === "snapshot") {
@@ -453,6 +491,7 @@ function connectEvents(jobId: string) {
 }
 
 onMounted(() => {
+  initializeApiToken();
   loadBootstrap().catch((error) => {
     errorMessage.value = error instanceof Error ? error.message : String(error);
   });
@@ -529,8 +568,8 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <template v-else>
-      <section class="grid">
+    <template>
+      <section v-if="appReady" class="grid">
         <article class="panel">
           <div class="panel-head">
             <h2>Batch Job</h2>

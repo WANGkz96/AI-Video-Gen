@@ -47,3 +47,12 @@ def test_auth_enabled_accepts_valid_bearer_token(monkeypatch):
     response = client.get("/api/health", headers={"Authorization": "Bearer secret-token"})
 
     assert response.status_code == 200
+
+
+def test_auth_enabled_accepts_query_token_for_browser_eventsource(monkeypatch):
+    main = load_main(monkeypatch, auth_required=True, token="secret-token")
+    client = TestClient(main.app)
+
+    response = client.get("/api/health?token=secret-token")
+
+    assert response.status_code == 200

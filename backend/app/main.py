@@ -46,9 +46,10 @@ def _is_authorized_api_request(request: Request) -> bool:
     expected_token = settings.ai_video_gen_api_token or ""
     header = request.headers.get("authorization", "")
     prefix = "Bearer "
-    if not header.startswith(prefix):
-        return False
-    supplied_token = header[len(prefix):].strip()
+    if header.startswith(prefix):
+        supplied_token = header[len(prefix):].strip()
+    else:
+        supplied_token = (request.query_params.get("token") or "").strip()
     return bool(supplied_token) and hmac.compare_digest(supplied_token, expected_token)
 
 
