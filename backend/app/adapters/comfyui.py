@@ -30,6 +30,29 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
         self._settings = settings
         self._api_url = settings.generator_api_url.rstrip("/")
         self._workflow_cache: dict[Path, tuple[int, dict[str, dict]]] = {}
+        self._http_timeout_sec = self._env_float("COMFYUI_HTTP_TIMEOUT_SEC", 120.0, minimum=1.0)
+        self._history_request_timeout_sec = self._env_float(
+            "COMFYUI_HISTORY_REQUEST_TIMEOUT_SEC",
+            30.0,
+            minimum=1.0,
+        )
+        self._output_download_timeout_sec = self._env_float(
+            "COMFYUI_OUTPUT_DOWNLOAD_TIMEOUT_SEC",
+            600.0,
+            minimum=1.0,
+        )
+
+    @staticmethod
+    def _env_float(name: str, fallback: float, *, minimum: float) -> float:
+        try:
+            value = float(os.getenv(name, str(fallback)))
+        except (TypeError, ValueError):
+            value = fallback
+        return max(minimum, value)
+
+    @staticmethod
+    def _timeout(seconds: float, *, connect_cap: float = 30.0) -> httpx.Timeout:
+        return httpx.Timeout(seconds, connect=max(1.0, min(connect_cap, seconds)))
 
     def info(self) -> AdapterInfo:
         missing = [
@@ -70,7 +93,7 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
     async def generate_segment(self, request: SegmentGenerationRequest) -> GenerationArtifact:
         request.outputPath.parent.mkdir(parents=True, exist_ok=True)
         started = time.perf_counter()
-        async with httpx.AsyncClient(timeout=None) as client:
+        async with httpx.AsyncClient(timeout=self._timeout(self._http_timeout_sec)) as client:
             prompt, workflow_kind, uploaded_image, debug = await self._build_prompt(client, request)
             prompt_id = await self._queue_prompt(client, prompt)
             history = await self._wait_for_history(client, prompt_id)
@@ -256,8 +279,16 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
         last_payload: dict | None = None
 
         while time.monotonic() < deadline:
-            response = await client.get(f"{self._api_url}/history/{prompt_id}")
-            response.raise_for_status()
+            try:
+                response = await client.get(
+                    f"{self._api_url}/history/{prompt_id}",
+                    timeout=self._timeout(self._history_request_timeout_sec, connect_cap=10.0),
+                )
+                response.raise_for_status()
+            except httpx.HTTPError as exc:
+                last_payload = {"pollError": str(exc)}
+                await asyncio.sleep(poll_sec)
+                continue
             payload = response.json()
             if isinstance(payload, dict) and prompt_id in payload:
                 history = payload[prompt_id]
@@ -301,7 +332,10 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
         output_path: Path,
     ) -> None:
         query = urlencode(output_info)
-        response = await client.get(f"{self._api_url}/view?{query}")
+        response = await client.get(
+            f"{self._api_url}/view?{query}",
+            timeout=self._timeout(self._output_download_timeout_sec),
+        )
         response.raise_for_status()
         tmp_path = output_path.with_suffix(f".download{output_path.suffix}")
         tmp_path.write_bytes(response.content)
