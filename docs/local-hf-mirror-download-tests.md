@@ -95,3 +95,25 @@ The monitor reports:
 
 It is a test/diagnostic tool. Video-Pipeline can later port the same decision
 logic into the Vast attempt supervisor.
+
+## 5. Watchdog Scenario Matrix
+
+The deterministic watchdog tests do not download large files. They replay
+synthetic byte-progress timelines against the same ETA decision function:
+
+```powershell
+python -m unittest tests.test_provisioning_eta_scenarios -v
+```
+
+Covered cases:
+
+- fast download: keep;
+- medium download: keep;
+- slow but still acceptable ETA: keep;
+- bursty speed with short stalls: keep;
+- too slow after stable ETA window: recycle;
+- large remaining payload with bad ETA: recycle;
+- no byte progress beyond threshold: recycle;
+- short transition between sequential files: keep;
+- long transition between sequential files: recycle;
+- downloader-reported error: recycle.

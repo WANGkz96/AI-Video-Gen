@@ -81,10 +81,15 @@ def evaluate(payload: dict[str, Any], samples: deque[tuple[float, int]], args: a
     current = payload.get("current") or None
 
     samples.append((now, downloaded))
-    while samples and now - samples[0][0] > args.window_sec:
+    retention_sec = max(args.window_sec, args.zero_progress_sec, args.transition_grace_sec)
+    retention_sec += max(1.0, args.interval_sec) * 2
+    while len(samples) > 2 and now - samples[0][0] > retention_sec:
         samples.popleft()
 
-    first_sample = samples[0] if samples else (now, downloaded)
+    speed_samples = [sample for sample in samples if now - sample[0] <= args.window_sec]
+    if len(speed_samples) < 2 and len(samples) >= 2:
+        speed_samples = list(samples)[-2:]
+    first_sample = speed_samples[0] if speed_samples else (now, downloaded)
     window_sec = max(0.0, now - first_sample[0])
     window_bytes = max(0, downloaded - first_sample[1])
     speed_bps = window_bytes / window_sec if window_sec > 0 else 0.0
@@ -102,9 +107,11 @@ def evaluate(payload: dict[str, Any], samples: deque[tuple[float, int]], args: a
             previous_bytes = bytes_value
         if downloaded > 0 and last_progress_at is None:
             last_progress_at = samples[0][0]
-    zero_progress_for = now - last_progress_at if last_progress_at else None
+    zero_progress_for = now - last_progress_at if last_progress_at is not None else None
 
-    warmup = window_sec < args.warmup_sec or window_bytes < args.min_window_bytes_mb * 1024 * 1024
+    observed_sec = max(0.0, now - samples[0][0]) if samples else 0.0
+    stable_window = window_sec >= args.warmup_sec or window_bytes >= args.min_window_bytes_mb * 1024 * 1024
+    warmup = observed_sec < args.warmup_sec or not stable_window
     transitioning = current is None and status in {"verifying", "retrying", "downloading"} and ready_count < total_count
     near_finish = progress_percent >= args.near_finish_percent
 
@@ -119,10 +126,6 @@ def evaluate(payload: dict[str, Any], samples: deque[tuple[float, int]], args: a
         decision = "recycle"
         reason = "downloader reported error"
         confidence = "high"
-    elif warmup:
-        decision = "warming_up"
-        reason = "not enough stable download samples yet"
-        confidence = "low"
     elif transitioning and zero_progress_for and zero_progress_for > args.transition_grace_sec:
         decision = "recycle"
         reason = "transition between files exceeded grace window"
@@ -131,6 +134,10 @@ def evaluate(payload: dict[str, Any], samples: deque[tuple[float, int]], args: a
         decision = "recycle"
         reason = "no byte progress in rolling window"
         confidence = "high"
+    elif warmup:
+        decision = "warming_up"
+        reason = "not enough stable download samples yet"
+        confidence = "low"
     elif eta_sec and eta_sec > args.bad_eta_min * 60 and not near_finish:
         decision = "recycle"
         reason = "stable ETA exceeds configured limit"
