@@ -568,8 +568,7 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <template>
-      <section v-if="appReady" class="grid">
+    <section v-if="appReady" class="grid">
         <article class="panel">
           <div class="panel-head">
             <h2>Batch Job</h2>
@@ -635,11 +634,11 @@ onBeforeUnmount(() => {
           </div>
           <button class="cta cta--ink" :disabled="busy" @click="startDirectJob">Запустить direct job</button>
         </article>
-      </section>
+    </section>
 
-      <p v-if="errorMessage" class="error-banner">{{ errorMessage }}</p>
+    <p v-if="errorMessage" class="error-banner">{{ errorMessage }}</p>
 
-      <section class="grid grid--wide">
+    <section class="grid grid--wide">
         <article class="panel">
           <div class="panel-head">
             <h2>Job Monitor</h2>
@@ -704,8 +703,7 @@ onBeforeUnmount(() => {
             <p v-for="entry in result.errors" :key="`${entry.segmentId}-${entry.error}`">{{ entry.error }}</p>
           </div>
         </article>
-      </section>
-    </template>
+    </section>
   </main>
 </template>
 
