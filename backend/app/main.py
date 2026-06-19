@@ -18,6 +18,30 @@ from backend.app.services.jobs import JobService
 settings = Settings.from_env()
 job_service = JobService(settings)
 
+PUBLIC_READ_API_ROUTES = {
+    "/api/health",
+    "/api/provisioning",
+    "/api/backends",
+    "/api/jobs",
+}
+
+
+def _is_public_read_api_route(request: Request) -> bool:
+    if request.method.upper() != "GET":
+        return False
+    path = request.url.path.rstrip("/") or "/"
+    if path in PUBLIC_READ_API_ROUTES:
+        return True
+    if not path.startswith("/api/jobs/"):
+        return False
+    suffix = path.removeprefix("/api/jobs/").strip("/")
+    if not suffix:
+        return False
+    parts = suffix.split("/")
+    if len(parts) == 1:
+        return True
+    return len(parts) == 2 and parts[1] in {"logs", "events"}
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -42,6 +66,8 @@ def _is_authorized_api_request(request: Request) -> bool:
     if request.method.upper() == "OPTIONS":
         return True
     if not request.url.path.startswith("/api/"):
+        return True
+    if _is_public_read_api_route(request):
         return True
     expected_token = settings.ai_video_gen_api_token or ""
     header = request.headers.get("authorization", "")
