@@ -918,11 +918,15 @@ class JobService:
         )
         image_path = self._resolve_input_file(runtime, image_file) if image_file else None
         negative_prompt = segment.generation.negativePrompt or ""
+        segment_prompt = prompt.strip()
+        # Global visual direction can describe the whole video, including scenes that
+        # belong to other timeline segments. Keep generation scoped to the current
+        # segment when a segment prompt is available, and use the global text only
+        # as a fallback for malformed/legacy manifests.
         resolved_prompt = "\n".join(
             item
             for item in [
-                manifest.globalVisualDirection.strip(),
-                prompt.strip(),
+                segment_prompt or manifest.globalVisualDirection.strip(),
                 segment.generation.continuityNote.strip(),
                 segment.generation.shotGoal.strip(),
             ]
