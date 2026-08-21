@@ -32,27 +32,43 @@ def test_auth_disabled_allows_api_requests(monkeypatch):
     assert response.status_code == 200
 
 
-def test_auth_enabled_rejects_missing_or_invalid_token(monkeypatch):
+def test_auth_enabled_keeps_public_monitoring_routes_open(monkeypatch):
     main = load_main(monkeypatch, auth_required=True, token="secret-token")
     client = TestClient(main.app)
 
-    assert client.get("/api/health").status_code == 401
-    assert client.get("/api/health", headers={"Authorization": "Bearer wrong"}).status_code == 401
+    assert client.get("/api/health").status_code == 200
+    assert client.get("/api/health", headers={"Authorization": "Bearer wrong"}).status_code == 200
+
+
+def test_auth_enabled_rejects_missing_or_invalid_token_for_mutations(monkeypatch):
+    main = load_main(monkeypatch, auth_required=True, token="secret-token")
+    client = TestClient(main.app)
+
+    assert client.post("/api/jobs", json={}).status_code == 401
+    assert client.post(
+        "/api/jobs",
+        json={},
+        headers={"Authorization": "Bearer wrong"},
+    ).status_code == 401
 
 
 def test_auth_enabled_accepts_valid_bearer_token(monkeypatch):
     main = load_main(monkeypatch, auth_required=True, token="secret-token")
     client = TestClient(main.app)
 
-    response = client.get("/api/health", headers={"Authorization": "Bearer secret-token"})
+    response = client.post(
+        "/api/jobs",
+        json={},
+        headers={"Authorization": "Bearer secret-token"},
+    )
 
-    assert response.status_code == 200
+    assert response.status_code != 401
 
 
-def test_auth_enabled_accepts_query_token_for_browser_eventsource(monkeypatch):
+def test_auth_enabled_accepts_query_token(monkeypatch):
     main = load_main(monkeypatch, auth_required=True, token="secret-token")
     client = TestClient(main.app)
 
-    response = client.get("/api/health?token=secret-token")
+    response = client.post("/api/jobs?token=secret-token", json={})
 
-    assert response.status_code == 200
+    assert response.status_code != 401
