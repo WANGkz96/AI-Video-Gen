@@ -789,6 +789,10 @@ class JobService:
         longcat_adapter = self._adapters.get(LongCatAvatarAdapter.key)
         if manifest.dialogueScenes and not isinstance(longcat_adapter, LongCatAvatarAdapter):
             raise AdapterUnavailableError("LongCat Video Avatar adapter is not registered.")
+        if manifest.dialogueScenes and isinstance(adapter, ComfyUiWorkflowAdapter):
+            await self._log(runtime, "info", "Releasing ComfyUI LTX models before LongCat scenes.")
+            await asyncio.to_thread(adapter.release)
+            await asyncio.sleep(2.0)
         for scene in sorted(manifest.dialogueScenes, key=lambda item: item.sceneIndex):
             await self._process_dialogue_scene(
                 runtime,

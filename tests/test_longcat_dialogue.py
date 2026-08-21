@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import httpx
+
+from backend.app.adapters.comfyui import ComfyUiWorkflowAdapter
 from backend.app.models import BatchExport
 from scripts.patch_longcat_runtime import patch_source
 
@@ -95,3 +98,20 @@ def generate(args):
     assert "target_orientation = str(input_data.get('target_orientation'" in patched
     assert "height, width = width, height" in patched
     assert patched.count("Applying target orientation") == 2
+
+
+def test_comfy_release_unloads_ltx_models(monkeypatch) -> None:
+    calls: list[dict] = []
+
+    def fake_post(url, **kwargs):
+        calls.append({"url": url, **kwargs})
+        return httpx.Response(200, request=httpx.Request("POST", url))
+
+    adapter = object.__new__(ComfyUiWorkflowAdapter)
+    adapter._api_url = "http://127.0.0.1:18188"
+    monkeypatch.setattr(httpx, "post", fake_post)
+
+    adapter.release()
+
+    assert calls[0]["url"] == "http://127.0.0.1:18188/free"
+    assert calls[0]["json"] == {"unload_models": True, "free_memory": True}

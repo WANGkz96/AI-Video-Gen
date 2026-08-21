@@ -90,6 +90,21 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
             notes=notes,
         )
 
+    def release(self) -> None:
+        """Ask ComfyUI to unload resident LTX models before another GPU backend runs."""
+        try:
+            response = httpx.post(
+                f"{self._api_url}/free",
+                json={"unload_models": True, "free_memory": True},
+                timeout=self._timeout(30.0),
+            )
+            response.raise_for_status()
+        except Exception:
+            # Releasing cached models is best-effort during shutdown. The explicit
+            # transition before LongCat is logged by JobService and LongCat still
+            # reports a useful generation error if memory could not be reclaimed.
+            return
+
     async def generate_segment(self, request: SegmentGenerationRequest) -> GenerationArtifact:
         request.outputPath.parent.mkdir(parents=True, exist_ok=True)
         started = time.perf_counter()
