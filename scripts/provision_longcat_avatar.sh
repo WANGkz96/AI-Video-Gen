@@ -62,7 +62,7 @@ if [ ! -x "${LONGCAT_CONDA_ENV_DIR}/bin/python" ]; then
     # Newer Vast templates ship uv and a system venv instead of /opt/conda.
     # Keep the existing env path contract used by the backend adapter while
     # letting uv install a managed Python 3.10 runtime into that directory.
-    uv venv --python 3.10 "${LONGCAT_CONDA_ENV_DIR}"
+    uv venv --python 3.10 --seed "${LONGCAT_CONDA_ENV_DIR}"
   else
     echo "Neither conda (${CONDA_BIN}) nor uv is available to create the LongCat Python 3.10 environment." >&2
     exit 127
@@ -70,6 +70,13 @@ if [ ! -x "${LONGCAT_CONDA_ENV_DIR}/bin/python" ]; then
 fi
 PYTHON_BIN="${LONGCAT_CONDA_ENV_DIR}/bin/python"
 HF_BIN="${LONGCAT_CONDA_ENV_DIR}/bin/hf"
+if ! "${PYTHON_BIN}" -m pip --version >/dev/null 2>&1; then
+  if command -v uv >/dev/null 2>&1; then
+    uv pip install --python "${PYTHON_BIN}" pip "setuptools<82" wheel
+  else
+    "${PYTHON_BIN}" -m ensurepip --upgrade
+  fi
+fi
 "${PYTHON_BIN}" -m pip install --upgrade pip "setuptools<82" wheel
 "${PYTHON_BIN}" -m pip install torch==2.7.1+cu128 torchvision==0.22.1+cu128 torchaudio==2.7.1+cu128 --index-url https://download.pytorch.org/whl/cu128
 "${PYTHON_BIN}" -m pip install numpy==1.26.4 ninja psutil packaging huggingface_hub
