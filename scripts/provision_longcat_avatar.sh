@@ -56,7 +56,17 @@ git -C "${LONGCAT_REPO_DIR}" checkout "${LONGCAT_REPO_REF}"
 
 write_status "provisioning" "8" "Preparing Python 3.10 environment."
 if [ ! -x "${LONGCAT_CONDA_ENV_DIR}/bin/python" ]; then
-  "${CONDA_BIN}" create -y -p "${LONGCAT_CONDA_ENV_DIR}" python=3.10
+  if [ -x "${CONDA_BIN}" ]; then
+    "${CONDA_BIN}" create -y -p "${LONGCAT_CONDA_ENV_DIR}" python=3.10
+  elif command -v uv >/dev/null 2>&1; then
+    # Newer Vast templates ship uv and a system venv instead of /opt/conda.
+    # Keep the existing env path contract used by the backend adapter while
+    # letting uv install a managed Python 3.10 runtime into that directory.
+    uv venv --python 3.10 "${LONGCAT_CONDA_ENV_DIR}"
+  else
+    echo "Neither conda (${CONDA_BIN}) nor uv is available to create the LongCat Python 3.10 environment." >&2
+    exit 127
+  fi
 fi
 PYTHON_BIN="${LONGCAT_CONDA_ENV_DIR}/bin/python"
 HF_BIN="${LONGCAT_CONDA_ENV_DIR}/bin/hf"
