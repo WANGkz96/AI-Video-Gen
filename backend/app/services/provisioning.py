@@ -88,6 +88,44 @@ def _read_downloader_status(settings: Settings) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
+def _read_status_file(path: Path) -> dict[str, Any] | None:
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _check_longcat(settings: Settings) -> dict[str, Any]:
+    required_files = [
+        settings.longcat_repo_dir / "run_demo_avatar_multi_audio_to_video.py",
+        settings.longcat_repo_dir / "weights" / "LongCat-Video" / "tokenizer" / "tokenizer_config.json",
+        settings.longcat_checkpoint_dir / "base_model_int8" / "quantized_model.safetensors.index.json",
+        settings.longcat_checkpoint_dir / "lora" / "dmd_lora.safetensors",
+        settings.longcat_checkpoint_dir / "whisper-large-v3" / "config.json",
+        settings.longcat_conda_env_dir / "bin" / "torchrun",
+    ]
+    missing = [item.as_posix() for item in required_files if not item.is_file()]
+    status_payload = _read_status_file(settings.longcat_provisioning_status_file) or {}
+    ready = not missing
+    return {
+        "required": settings.enable_longcat,
+        "ready": ready,
+        "status": "ready" if ready else str(status_payload.get("status") or "missing"),
+        "message": (
+            "LongCat Video Avatar is ready."
+            if ready
+            else str(status_payload.get("message") or "LongCat Video Avatar provisioning is incomplete.")
+        ),
+        "progressPercent": 100.0 if ready else float(status_payload.get("progressPercent") or 0),
+        "missing": missing,
+        "statusFile": settings.longcat_provisioning_status_file.as_posix(),
+        "error": status_payload.get("error"),
+    }
+
+
 def _check_comfy(settings: Settings) -> tuple[bool, str | None]:
     try:
         response = httpx.get(f"{settings.generator_api_url.rstrip('/')}/system_stats", timeout=2.0)
@@ -98,15 +136,15 @@ def _check_comfy(settings: Settings) -> tuple[bool, str | None]:
 
 
 def get_provisioning_status(settings: Settings) -> dict[str, Any]:
-    model_files = list_comfy_ltx23_model_files(settings)
+    model_files = list_comfy_ltx23_model_files(settings) if settings.enable_ltx else []
     missing = [model for model in model_files if not model["ready"]]
     workflows = [
         settings.comfyui_t2v_workflow,
         settings.comfyui_i2v_workflow,
-    ]
+    ] if settings.enable_ltx else []
     missing_workflows = [path.as_posix() for path in workflows if not path.is_file()]
-    comfy_ready, comfy_error = _check_comfy(settings)
-    downloader = _read_downloader_status(settings)
+    comfy_ready, comfy_error = _check_comfy(settings) if settings.enable_ltx else (True, None)
+    downloader = _read_downloader_status(settings) if settings.enable_ltx else None
     downloader_status = downloader.get("status") if downloader else None
     downloader_error = downloader.get("error") if downloader else None
     downloader_message = downloader.get("message") if downloader else None
@@ -116,11 +154,19 @@ def get_provisioning_status(settings: Settings) -> dict[str, Any]:
     model_percent = round((model_ready / model_total) * 100, 2) if model_total else 100.0
     progress_percent = float((downloader or {}).get("progressPercent") or model_percent)
 
-    ready = not missing and not missing_workflows and comfy_ready
+    ltx_ready = not missing and not missing_workflows and comfy_ready
+    longcat = _check_longcat(settings)
+    longcat_ready = not settings.enable_longcat or longcat["ready"]
+    ready = ltx_ready and longcat_ready
     if ready:
         status = "ready"
-        message = "ComfyUI and all required LTX 2.3 files are ready."
+        enabled = [name for name, flag in [("LTX 2.3", settings.enable_ltx), ("LongCat Avatar", settings.enable_longcat)] if flag]
+        message = f"All required generators are ready: {', '.join(enabled) or 'none'}."
         progress_percent = 100.0
+    elif settings.enable_longcat and not longcat_ready:
+        status = longcat["status"]
+        message = longcat["message"]
+        progress_percent = longcat["progressPercent"]
     elif downloader_status in {"downloading", "retrying", "verifying"}:
         status = downloader_status
         message = str(downloader_message or "Downloading required LTX 2.3 files.")
@@ -150,6 +196,7 @@ def get_provisioning_status(settings: Settings) -> dict[str, Any]:
         "current": (downloader or {}).get("current"),
         "error": downloader_error,
         "comfyui": {
+            "required": settings.enable_ltx,
             "ready": comfy_ready,
             "apiUrl": settings.generator_api_url.rstrip("/"),
             "error": comfy_error,
@@ -159,4 +206,9 @@ def get_provisioning_status(settings: Settings) -> dict[str, Any]:
             "missing": missing_workflows,
         },
         "statusFile": settings.provisioning_status_file.as_posix(),
+        "requirements": {
+            "ltx": settings.enable_ltx,
+            "longcatVideoAvatar": settings.enable_longcat,
+        },
+        "longcat": longcat,
     }

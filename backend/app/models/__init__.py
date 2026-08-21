@@ -90,6 +90,40 @@ class ManifestSegment(BaseSchema):
     generation: SegmentGeneration
 
 
+class DialogueSceneTimeline(BaseSchema):
+    startSec: float
+    endSec: float
+    durationSec: float
+
+
+class DialogueSceneGeneration(BaseSchema):
+    backend: str = "longcat_video_avatar"
+    model: str = "LongCat-Video-Avatar-1.5"
+    resolution: str = "480p"
+    fps: float = 25.0
+    prompt: str = ""
+    imagePrompt: str = ""
+    image: dict[str, Any] = Field(default_factory=dict)
+
+
+class DialogueSceneAudio(BaseSchema):
+    mode: str = "multi"
+    speaker1File: str
+    speaker2File: str
+
+
+class ManifestDialogueScene(BaseSchema):
+    sceneId: str
+    sceneIndex: int
+    timeline: DialogueSceneTimeline
+    narration: dict[str, Any] = Field(default_factory=dict)
+    continuity: dict[str, Any] = Field(default_factory=dict)
+    generation: DialogueSceneGeneration
+    audio: DialogueSceneAudio
+    output: dict[str, Any] = Field(default_factory=dict)
+    sourceArtifacts: dict[str, Any] = Field(default_factory=dict)
+
+
 class ProjectContext(BaseSchema):
     videoName: str = ""
     mainRequest: str = ""
@@ -125,6 +159,7 @@ class VariantManifest(BaseSchema):
     globalNegativePrompt: str = ""
     sourceArtifacts: SourceArtifacts = Field(default_factory=SourceArtifacts)
     segments: list[ManifestSegment] = Field(default_factory=list)
+    dialogueScenes: list[ManifestDialogueScene] = Field(default_factory=list)
 
 
 class VariantInfo(BaseSchema):
@@ -244,6 +279,29 @@ class SegmentGenerationRequest(BaseSchema):
     outputPath: Path
     backendParams: dict[str, Any] = Field(default_factory=dict)
     timeline: dict[str, Any] = Field(default_factory=dict)
+
+
+class DialogueSceneGenerationRequest(BaseSchema):
+    jobId: str
+    videoId: int
+    projectId: int
+    runId: str
+    videoTitle: str
+    variantKey: str
+    variantLabel: str
+    sceneId: str
+    sceneIndex: int
+    prompt: str
+    imagePath: Path
+    speaker1Path: Path
+    speaker2Path: Path
+    width: int = 720
+    height: int = 1280
+    fps: float = 25.0
+    durationSec: float = 8.0
+    outputPath: Path
+    timeline: dict[str, Any] = Field(default_factory=dict)
+    backendParams: dict[str, Any] = Field(default_factory=dict)
 
 
 class GenerationArtifact(BaseSchema):

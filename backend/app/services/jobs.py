@@ -13,6 +13,7 @@ from typing import Any
 from backend.app.adapters.base import AdapterUnavailableError, BaseGeneratorAdapter
 from backend.app.adapters.comfyui import ComfyUiWorkflowAdapter
 from backend.app.adapters.diffusers_video import DiffusersVideoAdapter
+from backend.app.adapters.longcat_avatar import LongCatAvatarAdapter
 from backend.app.adapters.mock_gen import MockGenAdapter
 from backend.app.adapters.planned import PlannedAdapter
 from backend.app.adapters.registry import build_real_model_registry
@@ -20,11 +21,13 @@ from backend.app.config import REPO_ROOT, Settings
 from backend.app.models import (
     AdapterInfo,
     BatchExport,
+    DialogueSceneGenerationRequest,
     DirectGenerationRequest,
     GenerationArtifact,
     JobQueuedResponse,
     JobSnapshot,
     LogEntry,
+    ManifestDialogueScene,
     ManifestSegment,
     SegmentGenerationRequest,
     VariantInfo,
@@ -118,12 +121,28 @@ class JobService:
         batch = BatchExport.model_validate(batch_payload)
         selected_backend = backend or self._settings.generator_backend
         job_backend_params = dict(backend_params or {})
-        self._ensure_backend_can_run(selected_backend)
+        has_regular_segments = any(
+            variant.manifest is not None and bool(variant.manifest.segments)
+            for video in batch.videos
+            for variant in video.variants
+        )
+        has_dialogue_scenes = any(
+            variant.manifest is not None and bool(variant.manifest.dialogueScenes)
+            for video in batch.videos
+            for variant in video.variants
+        )
+        if has_regular_segments:
+            self._ensure_backend_can_run(selected_backend)
+        if has_dialogue_scenes:
+            self._ensure_backend_can_run(LongCatAvatarAdapter.key)
         total_videos = len(batch.videos)
         total_variants = sum(len(video.variants) for video in batch.videos)
         total_segments = sum(
-            len(variant.manifest.segments)
-            * self._resolve_segment_variant_count(batch, video, variant.manifest)
+            (
+                len(variant.manifest.segments)
+                * self._resolve_segment_variant_count(batch, video, variant.manifest)
+                + len(variant.manifest.dialogueScenes)
+            )
             for video in batch.videos
             for variant in video.variants
             if variant.manifest is not None
@@ -278,6 +297,8 @@ class JobService:
         registry: dict[str, BaseGeneratorAdapter] = {
             comfy_adapter.key: comfy_adapter,
         }
+        longcat_adapter = LongCatAvatarAdapter(self._settings)
+        registry[longcat_adapter.key] = longcat_adapter
         if self._settings.enable_mock_backend or self._settings.generator_backend == "mock-gen":
             registry["mock-gen"] = MockGenAdapter(self._settings.mock_media_dir)
         if self._settings.enable_legacy_backends:
@@ -612,7 +633,7 @@ class JobService:
                 "variants": [],
             }
             for variant in video.variants:
-                variant_entry = {"key": variant.key, "segments": []}
+                variant_entry = {"key": variant.key, "segments": [], "dialogueScenes": []}
                 video_entry["variants"].append(variant_entry)
                 if variant.manifest is None or not variant.manifestFound:
                     message = f"Variant '{variant.key}' has no manifest payload."
@@ -764,6 +785,117 @@ class JobService:
                 self._write_snapshot(runtime)
                 await self._broadcast_snapshot(runtime)
                 await self._log(runtime, "error", f"Segment {segment.segmentId} failed: {exc}")
+
+        longcat_adapter = self._adapters.get(LongCatAvatarAdapter.key)
+        if manifest.dialogueScenes and not isinstance(longcat_adapter, LongCatAvatarAdapter):
+            raise AdapterUnavailableError("LongCat Video Avatar adapter is not registered.")
+        for scene in sorted(manifest.dialogueScenes, key=lambda item: item.sceneIndex):
+            await self._process_dialogue_scene(
+                runtime,
+                longcat_adapter,
+                video,
+                variant,
+                manifest,
+                scene,
+                variant_entry,
+            )
+
+    async def _process_dialogue_scene(
+        self,
+        runtime: JobRuntime,
+        adapter: LongCatAvatarAdapter,
+        video: VideoInfo,
+        variant: VariantInfo,
+        manifest: VariantManifest,
+        scene: ManifestDialogueScene,
+        variant_entry: dict[str, Any],
+    ) -> None:
+        await self._log(
+            runtime,
+            "info",
+            f"[{video.videoId}/{variant.key}] Dialogue scene {scene.sceneIndex} -> {scene.sceneId}",
+        )
+        scene_entry: dict[str, Any] = {"sceneId": scene.sceneId}
+        variant_entry["dialogueScenes"].append(scene_entry)
+        try:
+            request = self._build_dialogue_scene_request(runtime, video, variant, manifest, scene)
+            artifact = await self._generate_dialogue_scene_with_heartbeat(runtime, adapter, request)
+            probed = probe_video(
+                artifact.outputPath,
+                fallback_width=request.width,
+                fallback_height=request.height,
+                fallback_fps=25,
+                fallback_duration=request.durationSec,
+            )
+            self._assert_probe(artifact.outputPath, probed)
+            video_rel_path = artifact.outputPath.relative_to(runtime.workspace_dir)
+            metadata_path = artifact.outputPath.with_suffix(".json")
+            metadata_doc = {
+                "schemaVersion": "video-pipeline.external-generation.dialogue-scene.v1",
+                "generatedAt": utc_now().isoformat(),
+                "videoId": video.videoId,
+                "projectId": video.projectId,
+                "runId": video.runId,
+                "variantKey": variant.key,
+                "sceneId": scene.sceneId,
+                "sceneIndex": scene.sceneIndex,
+                "timeline": scene.timeline.model_dump(mode="json"),
+                "prompt": request.prompt,
+                "model": {"name": artifact.modelName, "version": artifact.modelVersion},
+                "render": probed,
+                "files": {
+                    "videoFile": video_rel_path.as_posix(),
+                    "imageFile": scene.generation.image.get("file"),
+                    "speaker1File": scene.audio.speaker1File,
+                    "speaker2File": scene.audio.speaker2File,
+                },
+                "debug": artifact.debug,
+            }
+            self._write_json(metadata_path, metadata_doc)
+            scene_entry.update(
+                {
+                    "videoFile": video_rel_path.as_posix(),
+                    "durationSec": probed["durationSec"],
+                    "width": probed["width"],
+                    "height": probed["height"],
+                    "fps": probed["fps"],
+                }
+            )
+            runtime.snapshot.completedSegments += 1
+            runtime.snapshot.updatedAt = utc_now()
+            self._write_snapshot(runtime)
+            await self._broadcast_snapshot(runtime)
+            await self._log(runtime, "info", f"Dialogue scene {scene.sceneId} completed via LongCat.")
+        except Exception as exc:
+            scene_entry.update({"status": "failed", "error": str(exc)})
+            runtime.snapshot.failedSegments += 1
+            runtime.snapshot.updatedAt = utc_now()
+            self._write_snapshot(runtime)
+            await self._broadcast_snapshot(runtime)
+            await self._log(runtime, "error", f"Dialogue scene {scene.sceneId} failed: {exc}")
+
+    async def _generate_dialogue_scene_with_heartbeat(
+        self,
+        runtime: JobRuntime,
+        adapter: LongCatAvatarAdapter,
+        request: DialogueSceneGenerationRequest,
+    ) -> GenerationArtifact:
+        generation_task = asyncio.create_task(adapter.generate_scene(request))
+        try:
+            while True:
+                try:
+                    return await asyncio.wait_for(asyncio.shield(generation_task), timeout=30.0)
+                except TimeoutError:
+                    runtime.snapshot.updatedAt = utc_now()
+                    self._write_snapshot(runtime)
+                    await self._broadcast_snapshot(runtime)
+        finally:
+            if not generation_task.done():
+                generation_task.cancel()
+                try:
+                    await generation_task
+                except asyncio.CancelledError:
+                    pass
 
     async def _generate_segment(
         self,
@@ -985,6 +1117,63 @@ class JobService:
             timeline=segment.timeline.model_dump(mode="json"),
         )
 
+    def _build_dialogue_scene_request(
+        self,
+        runtime: JobRuntime,
+        video: VideoInfo,
+        variant: VariantInfo,
+        manifest: VariantManifest,
+        scene: ManifestDialogueScene,
+    ) -> DialogueSceneGenerationRequest:
+        width, height, _fps, backend_params = self._resolve_render_settings(
+            video,
+            manifest,
+            runtime.backend_params,
+        )
+        image_file = str(scene.generation.image.get("file") or "").strip()
+        if not image_file:
+            raise ValueError(f"Dialogue scene {scene.sceneId} has no first-frame image.")
+        image_path = self._resolve_input_file(runtime, image_file)
+        speaker1_path = self._resolve_input_file(runtime, scene.audio.speaker1File)
+        speaker2_path = self._resolve_input_file(runtime, scene.audio.speaker2File)
+        output_path = (
+            runtime.workspace_dir
+            / "videos"
+            / str(video.videoId)
+            / variant.key
+            / "dialogue"
+            / scene.sceneId
+            / "scene.mp4"
+        )
+        return DialogueSceneGenerationRequest(
+            jobId=runtime.snapshot.jobId,
+            videoId=video.videoId,
+            projectId=video.projectId,
+            runId=video.runId,
+            videoTitle=video.title,
+            variantKey=variant.key,
+            variantLabel=variant.label,
+            sceneId=scene.sceneId,
+            sceneIndex=scene.sceneIndex,
+            prompt=scene.generation.prompt,
+            imagePath=image_path,
+            speaker1Path=speaker1_path,
+            speaker2Path=speaker2_path,
+            width=width,
+            height=height,
+            fps=25,
+            durationSec=scene.timeline.durationSec,
+            outputPath=output_path,
+            timeline=scene.timeline.model_dump(mode="json"),
+            backendParams={
+                **backend_params,
+                "resolution": "480p",
+                "sourceImage": image_file,
+                "speaker1File": scene.audio.speaker1File,
+                "speaker2File": scene.audio.speaker2File,
+            },
+        )
+
     def _resolve_render_settings(
         self,
         video: VideoInfo,
@@ -1126,6 +1315,28 @@ class JobService:
                                     "error": f"Metadata segmentId mismatch for {segment['segmentId']}",
                                 }
                             )
+                for scene in variant.get("dialogueScenes", []):
+                    if scene.get("status") == "failed":
+                        continue
+                    video_file = runtime.workspace_dir / scene["videoFile"]
+                    metadata_file = video_file.with_suffix(".json")
+                    if not video_file.is_file():
+                        errors.append(
+                            {
+                                "sceneId": scene["sceneId"],
+                                "status": "failed",
+                                "error": f"Missing generated dialogue scene: {scene['videoFile']}",
+                            }
+                        )
+                        continue
+                    if not metadata_file.is_file():
+                        errors.append(
+                            {
+                                "sceneId": scene["sceneId"],
+                                "status": "failed",
+                                "error": f"Missing dialogue scene metadata: {metadata_file.relative_to(runtime.workspace_dir).as_posix()}",
+                            }
+                        )
         return errors
 
     def _create_archive(self, runtime: JobRuntime) -> None:

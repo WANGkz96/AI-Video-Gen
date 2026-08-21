@@ -116,6 +116,12 @@ class Settings:
     frontend_dist_dir: Path
     ai_video_gen_auth_required: bool
     ai_video_gen_api_token: str | None
+    enable_ltx: bool
+    enable_longcat: bool
+    longcat_repo_dir: Path
+    longcat_checkpoint_dir: Path
+    longcat_conda_env_dir: Path
+    longcat_provisioning_status_file: Path
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -191,6 +197,24 @@ class Settings:
             frontend_dist_dir=frontend_dist_dir,
             ai_video_gen_auth_required=auth_required,
             ai_video_gen_api_token=api_token,
+            enable_ltx=_parse_bool(os.getenv("AI_VIDEO_GEN_ENABLE_LTX"), True),
+            enable_longcat=_parse_bool(os.getenv("AI_VIDEO_GEN_ENABLE_LONGCAT"), False),
+            longcat_repo_dir=Path(os.getenv("LONGCAT_REPO_DIR", "/workspace/LongCat-Video")).resolve(),
+            longcat_checkpoint_dir=Path(
+                os.getenv(
+                    "LONGCAT_AVATAR_CHECKPOINT_DIR",
+                    "/workspace/LongCat-Video/weights/LongCat-Video-Avatar-1.5",
+                )
+            ).resolve(),
+            longcat_conda_env_dir=Path(
+                os.getenv("LONGCAT_CONDA_ENV_DIR", "/opt/conda/envs/longcat-video")
+            ).resolve(),
+            longcat_provisioning_status_file=Path(
+                os.getenv(
+                    "LONGCAT_PROVISIONING_STATUS",
+                    workdir / "longcat-provisioning-status.json",
+                )
+            ).resolve(),
         )
 
     def ensure_dirs(self) -> None:

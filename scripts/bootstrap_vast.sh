@@ -118,6 +118,12 @@ write_runtime_env() {
   write_env_value "COMFYUI_NORMALIZE_OUTPUT" "${COMFYUI_NORMALIZE_OUTPUT:-0}"
   write_env_value "AI_VIDEO_GEN_DOWNLOAD_COMFY_MODELS" "${AI_VIDEO_GEN_DOWNLOAD_COMFY_MODELS}"
   write_env_value "AI_VIDEO_GEN_PROVISIONING_STATUS" "${AI_VIDEO_GEN_PROVISIONING_STATUS}"
+  write_env_value "AI_VIDEO_GEN_ENABLE_LTX" "${AI_VIDEO_GEN_ENABLE_LTX:-1}"
+  write_env_value "AI_VIDEO_GEN_ENABLE_LONGCAT" "${AI_VIDEO_GEN_ENABLE_LONGCAT:-0}"
+  write_env_value "LONGCAT_REPO_DIR" "${LONGCAT_REPO_DIR:-/workspace/LongCat-Video}"
+  write_env_value "LONGCAT_AVATAR_CHECKPOINT_DIR" "${LONGCAT_AVATAR_CHECKPOINT_DIR:-/workspace/LongCat-Video/weights/LongCat-Video-Avatar-1.5}"
+  write_env_value "LONGCAT_CONDA_ENV_DIR" "${LONGCAT_CONDA_ENV_DIR:-/opt/conda/envs/longcat-video}"
+  write_env_value "LONGCAT_PROVISIONING_STATUS" "${LONGCAT_PROVISIONING_STATUS:-${ROOT_DIR}/data/longcat-provisioning-status.json}"
   write_env_value "AI_VIDEO_GEN_AUTH_REQUIRED" "${AI_VIDEO_GEN_AUTH_REQUIRED:-0}"
   if [ -n "${AI_VIDEO_GEN_API_TOKEN:-}" ]; then
     write_env_value "AI_VIDEO_GEN_API_TOKEN" "${AI_VIDEO_GEN_API_TOKEN}"
