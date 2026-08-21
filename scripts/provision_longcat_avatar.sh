@@ -85,7 +85,7 @@ REQ_BASE="${ROOT_DIR}/data/tmp/longcat-requirements.txt"
 REQ_AVATAR="${ROOT_DIR}/data/tmp/longcat-requirements-avatar.txt"
 mkdir -p "$(dirname "${REQ_BASE}")"
 grep -Ev '^(torch|torchvision|torchaudio|numpy|flash-attn)([<=>].*)?$' "${LONGCAT_REPO_DIR}/requirements.txt" > "${REQ_BASE}"
-grep -Ev '^(torch|torchvision|torchaudio|numpy|libsndfile1|tritonserverclient)([<=>].*)?$' "${LONGCAT_REPO_DIR}/requirements_avatar.txt" > "${REQ_AVATAR}"
+grep -Ev '^(torch|torchvision|torchaudio|numpy|sympy|libsndfile1|tritonserverclient)([<=>].*)?$' "${LONGCAT_REPO_DIR}/requirements_avatar.txt" > "${REQ_AVATAR}"
 "${PYTHON_BIN}" -m pip install -r "${REQ_BASE}" -r "${REQ_AVATAR}"
 "${PYTHON_BIN}" -m pip install flash-attn==2.7.4.post1 --no-build-isolation
 

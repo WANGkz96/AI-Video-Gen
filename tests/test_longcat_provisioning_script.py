@@ -12,3 +12,4 @@ def test_longcat_provisioning_supports_vast_templates_without_conda() -> None:
     assert 'uv venv --python 3.10 --seed "${LONGCAT_CONDA_ENV_DIR}"' in script
     assert 'if ! "${PYTHON_BIN}" -m pip --version' in script
     assert 'uv pip install --python "${PYTHON_BIN}" pip' in script
+    assert "torchvision|torchaudio|numpy|sympy|libsndfile1" in script
