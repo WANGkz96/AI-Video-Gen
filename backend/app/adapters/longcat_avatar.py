@@ -4,6 +4,7 @@ import asyncio
 import json
 import math
 import os
+import wave
 from pathlib import Path
 
 from backend.app.adapters.base import AdapterUnavailableError, BaseGeneratorAdapter
@@ -70,6 +71,18 @@ class LongCatAvatarAdapter(BaseGeneratorAdapter):
         generated_dir = run_dir / "generated"
         run_dir.mkdir(parents=True, exist_ok=True)
         generated_dir.mkdir(parents=True, exist_ok=True)
+        speaker_paths = {
+            "person1": request.speaker1Path,
+            "person2": request.speaker2Path,
+        }
+        substituted_silent_tracks: list[str] = []
+        for person, source_path in tuple(speaker_paths.items()):
+            if not self._pcm_wav_is_fully_silent(source_path):
+                continue
+            prepared_path = run_dir / f"{person}_technical_silence.wav"
+            self._write_longcat_compatible_silence(source_path, prepared_path, request.durationSec)
+            speaker_paths[person] = prepared_path
+            substituted_silent_tracks.append(person)
         num_segments = max(1, 1 + math.ceil(max(0.0, request.durationSec - 3.72) / 3.2))
         stable_prompt = " ".join(
             item
@@ -90,8 +103,8 @@ class LongCatAvatarAdapter(BaseGeneratorAdapter):
             ],
             "cond_image": request.imagePath.as_posix(),
             "cond_audio": {
-                "person1": request.speaker1Path.as_posix(),
-                "person2": request.speaker2Path.as_posix(),
+                "person1": speaker_paths["person1"].as_posix(),
+                "person2": speaker_paths["person2"].as_posix(),
             },
             "audio_type": "para",
             "target_orientation": "portrait" if request.height > request.width else "landscape",
@@ -163,8 +176,59 @@ class LongCatAvatarAdapter(BaseGeneratorAdapter):
                 "numSegments": num_segments,
                 "durationSec": request.durationSec,
                 "fps": 25,
+                "substitutedSilentTracks": substituted_silent_tracks,
             },
         )
+
+    @staticmethod
+    def _pcm_wav_is_fully_silent(path: Path) -> bool:
+        """Return True only for a valid PCM WAV whose samples are all digital silence."""
+        try:
+            with wave.open(path.as_posix(), "rb") as source:
+                sample_width = source.getsampwidth()
+                frames = source.readframes(source.getnframes())
+        except (OSError, EOFError, wave.Error):
+            return False
+
+        if not frames:
+            return True
+        if sample_width == 1:
+            # Eight-bit PCM WAV uses unsigned 128 as its zero level.
+            return all(sample == 128 for sample in frames)
+        return not any(frames)
+
+    @staticmethod
+    def _write_longcat_compatible_silence(source_path: Path, output_path: Path, duration_sec: float) -> None:
+        """Preserve silence while adding one inaudible LSB sample for LongCat's separator."""
+        try:
+            with wave.open(source_path.as_posix(), "rb") as source:
+                channels = max(1, source.getnchannels())
+                sample_width = max(1, source.getsampwidth())
+                sample_rate = max(1, source.getframerate())
+                frames = bytearray(source.readframes(source.getnframes()))
+        except (OSError, EOFError, wave.Error):
+            channels = 1
+            sample_width = 2
+            sample_rate = 24_000
+            frames = bytearray()
+
+        frame_width = channels * sample_width
+        if not frames:
+            frame_count = max(1, round(max(0.01, duration_sec) * sample_rate))
+            if sample_width == 1:
+                frames = bytearray([128]) * (frame_count * frame_width)
+            else:
+                frames = bytearray(frame_count * frame_width)
+
+        # audio-separator rejects mathematically all-zero input. A single
+        # least-significant-bit sample is inaudible but keeps the silent actor valid.
+        frames[0] = 129 if sample_width == 1 else 1
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with wave.open(output_path.as_posix(), "wb") as target:
+            target.setnchannels(channels)
+            target.setsampwidth(sample_width)
+            target.setframerate(sample_rate)
+            target.writeframes(frames)
 
     async def _normalize_video(
         self,

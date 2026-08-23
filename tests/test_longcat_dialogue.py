@@ -1,10 +1,23 @@
 from pathlib import Path
+import wave
 
 import httpx
 
 from backend.app.adapters.comfyui import ComfyUiWorkflowAdapter
+from backend.app.adapters.longcat_avatar import LongCatAvatarAdapter
 from backend.app.models import BatchExport
 from scripts.patch_longcat_runtime import patch_source
+
+
+def _write_pcm_wav(path: Path, samples: list[int], sample_rate: int = 24_000) -> None:
+    payload = bytearray()
+    for sample in samples:
+        payload.extend(int(sample).to_bytes(2, "little", signed=True))
+    with wave.open(path.as_posix(), "wb") as target:
+        target.setnchannels(1)
+        target.setsampwidth(2)
+        target.setframerate(sample_rate)
+        target.writeframes(payload)
 
 
 def test_dialogue_only_manifest_is_valid() -> None:
@@ -98,6 +111,27 @@ def generate(args):
     assert "target_orientation = str(input_data.get('target_orientation'" in patched
     assert "height, width = width, height" in patched
     assert patched.count("Applying target orientation") == 2
+
+
+def test_longcat_adapter_makes_fully_silent_track_separator_compatible(tmp_path: Path) -> None:
+    source = tmp_path / "silent.wav"
+    prepared = tmp_path / "prepared.wav"
+    _write_pcm_wav(source, [0] * 2_400)
+
+    assert LongCatAvatarAdapter._pcm_wav_is_fully_silent(source) is True
+    LongCatAvatarAdapter._write_longcat_compatible_silence(source, prepared, 0.1)
+
+    assert LongCatAvatarAdapter._pcm_wav_is_fully_silent(prepared) is False
+    with wave.open(prepared.as_posix(), "rb") as result:
+        assert result.getnframes() == 2_400
+        assert result.getframerate() == 24_000
+
+
+def test_longcat_adapter_keeps_spoken_track_untouched(tmp_path: Path) -> None:
+    spoken = tmp_path / "spoken.wav"
+    _write_pcm_wav(spoken, [0, 1, -1, 0])
+
+    assert LongCatAvatarAdapter._pcm_wav_is_fully_silent(spoken) is False
 
 
 def test_comfy_release_unloads_ltx_models(monkeypatch) -> None:
