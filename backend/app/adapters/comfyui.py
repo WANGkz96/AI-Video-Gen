@@ -18,13 +18,13 @@ import httpx
 from backend.app.adapters.base import AdapterUnavailableError, BaseGeneratorAdapter
 from backend.app.config import REPO_ROOT, Settings
 from backend.app.models import AdapterInfo, GenerationArtifact, SegmentGenerationRequest
-from backend.app.services.provisioning import missing_comfy_ltx23_model_files
+from backend.app.services.provisioning import COMFY_LTX25_MODEL_NAMES, missing_comfy_ltx25_model_files
 
 
 class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
-    """Run the production LTX 2.3 ComfyUI blueprints through ComfyUI's HTTP API."""
+    """Run the production LTX 2.5 ComfyUI workflow through ComfyUI's HTTP API."""
 
-    key = "comfyui-ltx23"
+    key = "comfyui-ltx25"
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
@@ -60,7 +60,7 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
             for path in [self._settings.comfyui_t2v_workflow, self._settings.comfyui_i2v_workflow]
             if not path.is_file()
         ]
-        missing_models = [path.as_posix() for path in missing_comfy_ltx23_model_files(self._settings)]
+        missing_models = [path.as_posix() for path in missing_comfy_ltx25_model_files(self._settings)]
         comfy_error = self._check_comfyui()
         available = not missing and not missing_models and comfy_error is None
         notes = None
@@ -73,10 +73,10 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
 
         return AdapterInfo(
             key=self.key,
-            label="ComfyUI LTX 2.3",
+            label="ComfyUI LTX 2.5",
             description=(
-                "Production backend that executes the ComfyUI video_ltx2_3_t2v and "
-                "video_ltx2_3_i2v workflows through the local ComfyUI API."
+                "Production backend that executes the ComfyUI LTX 2.5 single-stage "
+                "text/image-to-video workflow through the local ComfyUI API."
             ),
             status="ready",
             available=available,
@@ -84,7 +84,7 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
             supportsDirect=True,
             requiresRemote=True,
             requiresDownload=bool(missing_models),
-            modelId="ComfyUI workflow: video_ltx2_3_t2v / video_ltx2_3_i2v",
+            modelId="ComfyUI workflow: LTX-2.5_T2V_I2V_Single_Stage_Distilled",
             localPath=self._settings.comfyui_t2v_workflow.parent.as_posix(),
             minimumVramGb=32,
             notes=notes,
@@ -172,18 +172,20 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
         workflow_path = (
             self._settings.comfyui_i2v_workflow if use_i2v else self._settings.comfyui_t2v_workflow
         )
-        workflow_kind = "video_ltx2_3_i2v" if use_i2v else "video_ltx2_3_t2v"
+        workflow_kind = "video_ltx2_5_i2v" if use_i2v else "video_ltx2_5_t2v"
         prompt = deepcopy(await self._load_api_workflow(client, workflow_path))
         seed = self._resolve_seed(request)
         output_prefix = self._build_output_prefix(request)
 
         self._set_prompt_text(prompt, request.resolvedPrompt or request.prompt)
         self._set_negative_prompt(prompt, request.resolvedNegativePrompt or request.negativePrompt)
-        self._set_primitive_int(prompt, "Width", request.width)
-        self._set_primitive_int(prompt, "Height", request.height)
-        self._set_primitive_int(prompt, "Duration", max(1, int(round(request.durationSec))))
-        self._set_primitive_int(prompt, "Frame Rate", max(1, int(round(request.fps))))
-        self._set_text_to_video_switch(prompt, enabled=not use_i2v)
+        self._set_primitive_number(prompt, ("Width",), request.width)
+        self._set_primitive_number(prompt, ("Height",), request.height)
+        self._set_primitive_number(prompt, ("Duration", "duration in seconds"), request.durationSec)
+        self._set_primitive_number(prompt, ("Frame Rate", "fps (frames per second)"), request.fps)
+        self._set_ltx25_resolution(prompt, width=request.width, height=request.height)
+        self._set_image_mode(prompt, use_i2v=use_i2v)
+        self._set_ltx25_model_files(prompt)
         self._set_noise_seed(prompt, seed)
         self._add_save_video_node(prompt, output_prefix)
 
@@ -360,8 +362,8 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
         found = False
         for node in prompt.values():
             if node.get("class_type") == "PrimitiveStringMultiline":
-                title = (node.get("_meta") or {}).get("title")
-                if title == "Prompt":
+                title = str((node.get("_meta") or {}).get("title") or "").strip().lower()
+                if title in {"prompt", "prompt (positive)"}:
                     node.setdefault("inputs", {})["value"] = text
                     found = True
         if not found:
@@ -371,33 +373,131 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
         if not text:
             return
         for node in prompt.values():
+            title = str((node.get("_meta") or {}).get("title") or "").strip().lower()
+            if node.get("class_type") == "PrimitiveStringMultiline" and title in {
+                "negative prompt",
+                "prompt (negative)",
+            }:
+                node.setdefault("inputs", {})["value"] = text
             if node.get("class_type") == "CLIPTextEncode":
                 inputs = node.setdefault("inputs", {})
                 if isinstance(inputs.get("text"), str):
                     inputs["text"] = text
 
-    def _set_primitive_int(self, prompt: dict[str, dict], title: str, value: int) -> None:
+    def _set_primitive_number(
+        self,
+        prompt: dict[str, dict],
+        titles: tuple[str, ...],
+        value: float | int,
+    ) -> None:
         found = False
+        expected_titles = {title.strip().lower() for title in titles}
         for node in prompt.values():
-            if node.get("class_type") == "PrimitiveInt" and (node.get("_meta") or {}).get("title") == title:
-                node.setdefault("inputs", {})["value"] = int(value)
+            if node.get("class_type") not in {"PrimitiveInt", "PrimitiveFloat"}:
+                continue
+            title = str((node.get("_meta") or {}).get("title") or "").strip().lower()
+            if title in expected_titles:
+                node.setdefault("inputs", {})["value"] = (
+                    int(round(value)) if node.get("class_type") == "PrimitiveInt" else float(value)
+                )
                 found = True
         if not found:
-            raise AdapterUnavailableError(f"ComfyUI workflow does not expose PrimitiveInt '{title}'.")
+            raise AdapterUnavailableError(
+                "ComfyUI workflow does not expose a numeric control for: " + ", ".join(titles)
+            )
 
-    def _set_text_to_video_switch(self, prompt: dict[str, dict], enabled: bool) -> None:
+    def _set_image_mode(self, prompt: dict[str, dict], *, use_i2v: bool) -> None:
+        found_ltx25_control = False
         for node in prompt.values():
+            inputs = node.setdefault("inputs", {})
+            # The official LTX 2.5 workflow represents the Input Parameters
+            # subgraph with generated field names. ``value_3`` is its explicit
+            # "use image input" boolean and remains stable in API conversion.
+            if {"value_2", "value_3", "value_5"}.issubset(inputs):
+                inputs["value_3"] = bool(use_i2v)
+                found_ltx25_control = True
+                continue
             if node.get("class_type") != "PrimitiveBoolean":
                 continue
             title = str((node.get("_meta") or {}).get("title") or "")
             if "Text to Video" in title:
-                node.setdefault("inputs", {})["value"] = bool(enabled)
+                inputs["value"] = not use_i2v
+
+        if use_i2v and not found_ltx25_control:
+            # Older blueprints do not need this generated field; their image
+            # connection is wired below. The current LTX 2.5 template does.
+            if self._settings.comfyui_t2v_workflow == self._settings.comfyui_i2v_workflow:
+                raise AdapterUnavailableError("LTX 2.5 workflow does not expose the 'use image input' control.")
+
+    def _set_ltx25_resolution(self, prompt: dict[str, dict], *, width: int, height: int) -> None:
+        for node in prompt.values():
+            inputs = node.setdefault("inputs", {})
+            if {"width", "height", "strength", "bypass"}.issubset(inputs):
+                inputs["width"] = int(width)
+                inputs["height"] = int(height)
+                return
+
+        if self._settings.comfyui_t2v_workflow == self._settings.comfyui_i2v_workflow:
+            raise AdapterUnavailableError("LTX 2.5 workflow does not expose video width and height controls.")
+
+    def _set_ltx25_model_files(self, prompt: dict[str, dict]) -> None:
+        """Select the exact local LTX 2.5 pack in the converted Comfy graph.
+
+        Lightricks' example graph ships with BF16 file names.  Packet uses the
+        compatible Comfy INT8 transformer/text encoder to leave enough disk
+        for LongCat Avatar, therefore relying on the blueprint defaults would
+        make ComfyUI request files that were intentionally not downloaded.
+        """
+
+        configured: set[str] = set()
+        for node in prompt.values():
+            inputs = node.setdefault("inputs", {})
+            class_type = str(node.get("class_type") or "")
+            title = str((node.get("_meta") or {}).get("title") or "").lower()
+
+            if class_type == "UNETLoader" and "unet_name" in inputs:
+                inputs["unet_name"] = COMFY_LTX25_MODEL_NAMES["transformer"]
+                configured.add("transformer")
+                continue
+
+            if class_type == "CLIPLoader" and "clip_name" in inputs:
+                if "enhancer" in title:
+                    inputs["clip_name"] = COMFY_LTX25_MODEL_NAMES["text_enhancer"]
+                    configured.add("text_enhancer")
+                elif "encoder" in title or "ltx" in title:
+                    inputs["clip_name"] = COMFY_LTX25_MODEL_NAMES["text_encoder"]
+                    configured.add("text_encoder")
+                continue
+
+            if class_type == "VAELoader" and "vae_name" in inputs:
+                if "audio" in title:
+                    inputs["vae_name"] = COMFY_LTX25_MODEL_NAMES["audio_vae"]
+                    configured.add("audio_vae")
+                elif "video" in title or "vae" in title:
+                    inputs["vae_name"] = COMFY_LTX25_MODEL_NAMES["video_vae"]
+                    configured.add("video_vae")
+                continue
+
+            # LTX's Input Parameters subgraph also carries a model selector
+            # for its prompt path.  It has generated input names after the
+            # workflow converter runs, but ``ckpt_name`` remains stable.
+            if {"value_2", "value_3", "value_5", "ckpt_name"}.issubset(inputs):
+                inputs["ckpt_name"] = COMFY_LTX25_MODEL_NAMES["transformer"]
+                configured.add("transformer_input")
+
+        expected = {"transformer", "text_encoder", "text_enhancer", "video_vae", "audio_vae"}
+        missing = expected - configured
+        if missing:
+            raise AdapterUnavailableError(
+                "LTX 2.5 workflow does not expose local model selectors for: " + ", ".join(sorted(missing))
+            )
 
     def _set_noise_seed(self, prompt: dict[str, dict], seed: int) -> None:
         offset = 0
         for node in prompt.values():
-            if node.get("class_type") == "RandomNoise":
-                node.setdefault("inputs", {})["noise_seed"] = int(seed + offset)
+            inputs = node.setdefault("inputs", {})
+            if node.get("class_type") == "RandomNoise" or "noise_seed" in inputs:
+                inputs["noise_seed"] = int(seed + offset)
                 offset += 1
         if offset == 0:
             raise AdapterUnavailableError("ComfyUI workflow does not expose RandomNoise seed nodes.")
@@ -407,15 +507,37 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
         for node in prompt.values():
             title = (node.get("_meta") or {}).get("title")
             inputs = node.get("inputs") or {}
-            if title in {"Width", "Height", "Duration", "Frame Rate", "Prompt"}:
+            if title in {
+                "Width",
+                "Height",
+                "Duration",
+                "Frame Rate",
+                "Prompt",
+                "Prompt (positive)",
+                "Prompt (negative)",
+                "duration in seconds (determines frames #)",
+                "fps (frames per second)",
+            }:
                 controls[str(title)] = dict(inputs)
             if node.get("class_type") == "PrimitiveBoolean" and "Text to Video" in str(title or ""):
                 controls[str(title)] = dict(inputs)
-            if node.get("class_type") == "RandomNoise":
+            if node.get("class_type") == "RandomNoise" or "noise_seed" in inputs:
                 controls.setdefault("RandomNoise", []).append(inputs.get("noise_seed"))
         return controls
 
     def _wire_uploaded_image(self, prompt: dict[str, dict], load_image_value: str) -> dict[str, object]:
+        # LTX 2.5's official joint T2V/I2V workflow already has a LoadImage
+        # node connected to the input subgraph. Reuse it instead of adding a
+        # second disconnected loader as the old LTX 2.3 workflow required.
+        for node_id, node in prompt.items():
+            if node.get("class_type") == "LoadImage":
+                node.setdefault("inputs", {})["image"] = load_image_value
+                return {
+                    "loadImageNodeId": node_id,
+                    "loadImageValue": load_image_value,
+                    "wiredExistingLoadImage": True,
+                }
+
         load_node_id = self._next_node_id(prompt)
         prompt[load_node_id] = {
             "inputs": {"image": load_image_value},
@@ -442,6 +564,13 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
         raise AdapterUnavailableError("ComfyUI I2V workflow does not expose ResizeImageMaskNode input.")
 
     def _add_save_video_node(self, prompt: dict[str, dict], output_prefix: str) -> None:
+        # The official LTX 2.5 blueprint includes a native SaveVideo output.
+        # Its history entry is sufficient to download the result, and keeping
+        # the workflow's own output node avoids relying on obsolete CreateVideo
+        # graph internals from LTX 2.3.
+        if any(node.get("class_type") == "SaveVideo" for node in prompt.values()):
+            return
+
         create_node_id = None
         for node_id, node in prompt.items():
             if node.get("class_type") == "CreateVideo":

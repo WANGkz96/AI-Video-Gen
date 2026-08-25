@@ -10,38 +10,50 @@ import httpx
 from backend.app.config import Settings
 
 
-COMFY_LTX23_MODELS = [
+COMFY_LTX25_MODELS = [
     {
-        "id": "gemma_3_12B_it_fp4_mixed",
-        "label": "Gemma 3 text encoder",
+        "id": "ltx_2_5_22b_distilled_transformer_comfy_int8",
+        "label": "LTX 2.5 distilled transformer (ComfyUI INT8)",
+        "targetSubdir": "models/diffusion_models",
+        "targetFilename": "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+    },
+    {
+        "id": "gemma4_12b_ltx_2_5_comfy_int8",
+        "label": "Gemma 4 LTX 2.5 text encoder (ComfyUI INT8)",
         "targetSubdir": "models/text_encoders",
-        "targetFilename": "gemma_3_12B_it_fp4_mixed.safetensors",
+        "targetFilename": "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
     },
     {
-        "id": "ltx_2_3_22b_dev_fp8",
-        "label": "LTX 2.3 FP8 checkpoint",
-        "targetSubdir": "models/checkpoints",
-        "targetFilename": "ltx-2.3-22b-dev-fp8.safetensors",
+        "id": "gemma4_e2b_it_bf16",
+        "label": "Gemma 4 prompt enhancer",
+        "targetSubdir": "models/text_encoders",
+        "targetFilename": "gemma4_e2b_it_bf16.safetensors",
     },
     {
-        "id": "ltx_2_3_22b_distilled_lora_384",
-        "label": "LTX 2.3 distilled LoRA",
-        "targetSubdir": "models/loras",
-        "targetFilename": "ltx-2.3-22b-distilled-lora-384.safetensors",
+        "id": "ltx_2_5_video_vae_conv",
+        "label": "LTX 2.5 convolutional video VAE",
+        "targetSubdir": "models/vae",
+        "targetFilename": "ltx-2.5-video-vae-conv-bf16.safetensors",
     },
     {
-        "id": "gemma_3_12b_abliterated_lora_rank64_bf16",
-        "label": "Gemma 3 LoRA",
-        "targetSubdir": "models/loras",
-        "targetFilename": "gemma-3-12b-it-abliterated_lora_rank64_bf16.safetensors",
-    },
-    {
-        "id": "ltx_2_3_spatial_upscaler_x2_1_1",
-        "label": "LTX 2.3 spatial upscaler",
-        "targetSubdir": "models/latent_upscale_models",
-        "targetFilename": "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+        "id": "ltx_2_5_audio_vae",
+        "label": "LTX 2.5 audio VAE",
+        "targetSubdir": "models/vae",
+        "targetFilename": "ltx-2.5-audio-vae-bf16.safetensors",
     },
 ]
+
+# Keep these names in one place: the Packet bootstrap deliberately uses the
+# ComfyUI INT8/convrot pack so LTX and LongCat Avatar can coexist on Packet's
+# 150 GB ephemeral disk.  The official workflow defaults to BF16 names, so the
+# adapter must override those defaults in the converted API graph.
+COMFY_LTX25_MODEL_NAMES = {
+    "transformer": "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+    "text_encoder": "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+    "text_enhancer": "gemma4_e2b_it_bf16.safetensors",
+    "video_vae": "ltx-2.5-video-vae-conv-bf16.safetensors",
+    "audio_vae": "ltx-2.5-audio-vae-bf16.safetensors",
+}
 
 
 def _utc_now() -> str:
@@ -52,9 +64,9 @@ def _target_path(settings: Settings, model: dict[str, str]) -> Path:
     return settings.comfyui_root / model["targetSubdir"] / model["targetFilename"]
 
 
-def list_comfy_ltx23_model_files(settings: Settings) -> list[dict[str, Any]]:
+def list_comfy_ltx25_model_files(settings: Settings) -> list[dict[str, Any]]:
     models: list[dict[str, Any]] = []
-    for model in COMFY_LTX23_MODELS:
+    for model in COMFY_LTX25_MODELS:
         path = _target_path(settings, model)
         size = path.stat().st_size if path.is_file() else 0
         models.append(
@@ -69,10 +81,10 @@ def list_comfy_ltx23_model_files(settings: Settings) -> list[dict[str, Any]]:
     return models
 
 
-def missing_comfy_ltx23_model_files(settings: Settings) -> list[Path]:
+def missing_comfy_ltx25_model_files(settings: Settings) -> list[Path]:
     return [
         Path(model["targetPath"])
-        for model in list_comfy_ltx23_model_files(settings)
+        for model in list_comfy_ltx25_model_files(settings)
         if not model["ready"]
     ]
 
@@ -136,7 +148,7 @@ def _check_comfy(settings: Settings) -> tuple[bool, str | None]:
 
 
 def get_provisioning_status(settings: Settings) -> dict[str, Any]:
-    model_files = list_comfy_ltx23_model_files(settings) if settings.enable_ltx else []
+    model_files = list_comfy_ltx25_model_files(settings) if settings.enable_ltx else []
     missing = [model for model in model_files if not model["ready"]]
     workflows = [
         settings.comfyui_t2v_workflow,
@@ -159,17 +171,17 @@ def get_provisioning_status(settings: Settings) -> dict[str, Any]:
     longcat_ready = not settings.enable_longcat or longcat["ready"]
     if not settings.enable_ltx:
         ltx_status = "disabled"
-        ltx_message = "LTX 2.3 is not required for this instance."
+        ltx_message = "LTX 2.5 is not required for this instance."
         ltx_progress_percent = 100.0
         ltx_error = None
     elif ltx_ready:
         ltx_status = "ready"
-        ltx_message = "LTX 2.3 and ComfyUI are ready."
+        ltx_message = "LTX 2.5 and ComfyUI are ready."
         ltx_progress_percent = 100.0
         ltx_error = None
     elif downloader_status in {"downloading", "retrying", "verifying"}:
         ltx_status = downloader_status
-        ltx_message = str(downloader_message or "Downloading required LTX 2.3 files.")
+        ltx_message = str(downloader_message or "Downloading required LTX 2.5 files.")
         ltx_progress_percent = progress_percent
         ltx_error = None
     elif downloader_status == "error":
@@ -179,7 +191,7 @@ def get_provisioning_status(settings: Settings) -> dict[str, Any]:
         ltx_error = downloader_error or downloader_message
     elif missing:
         ltx_status = "missing"
-        ltx_message = "Required LTX 2.3 model files are missing."
+        ltx_message = "Required LTX 2.5 model files are missing."
         ltx_progress_percent = progress_percent
         ltx_error = None
     elif missing_workflows:
@@ -204,7 +216,7 @@ def get_provisioning_status(settings: Settings) -> dict[str, Any]:
     ready = ltx_ready and longcat_ready
     if ready:
         status = "ready"
-        enabled = [name for name, flag in [("LTX 2.3", settings.enable_ltx), ("LongCat Avatar", settings.enable_longcat)] if flag]
+        enabled = [name for name, flag in [("LTX 2.5", settings.enable_ltx), ("LongCat Avatar", settings.enable_longcat)] if flag]
         message = f"All required generators are ready: {', '.join(enabled) or 'none'}."
         progress_percent = 100.0
     elif settings.enable_longcat and not longcat_ready:
@@ -213,13 +225,13 @@ def get_provisioning_status(settings: Settings) -> dict[str, Any]:
         progress_percent = longcat["progressPercent"]
     elif downloader_status in {"downloading", "retrying", "verifying"}:
         status = downloader_status
-        message = str(downloader_message or "Downloading required LTX 2.3 files.")
+        message = str(downloader_message or "Downloading required LTX 2.5 files.")
     elif downloader_status == "error":
         status = "error"
         message = str(downloader_error or downloader_message or "Model download failed.")
     elif missing:
         status = "missing"
-        message = "Required LTX 2.3 model files are missing."
+        message = "Required LTX 2.5 model files are missing."
     elif missing_workflows:
         status = "missing"
         message = "Required ComfyUI workflow files are missing."
@@ -255,7 +267,7 @@ def get_provisioning_status(settings: Settings) -> dict[str, Any]:
             "longcatVideoAvatar": settings.enable_longcat,
         },
         "branches": {
-            "comfyui-ltx23": ltx,
+            "comfyui-ltx25": ltx,
             "longcat-video-avatar": {
                 **longcat,
                 "ready": longcat_ready,

@@ -19,11 +19,11 @@ def main() -> None:
     workflow_paths = [
         env_path(
             "COMFYUI_T2V_WORKFLOW",
-            "/workspace/ComfyUI/blueprints/Text to Video (LTX-2.3).json",
+            "/workspace/ComfyUI/blueprints/LTX-2.5_T2V_I2V_Single_Stage_Distilled.json",
         ),
         env_path(
             "COMFYUI_I2V_WORKFLOW",
-            "/workspace/ComfyUI/blueprints/Image to Video (LTX-2.3).json",
+            "/workspace/ComfyUI/blueprints/LTX-2.5_T2V_I2V_Single_Stage_Distilled.json",
         ),
     ]
     deadline = time.monotonic() + timeout_sec

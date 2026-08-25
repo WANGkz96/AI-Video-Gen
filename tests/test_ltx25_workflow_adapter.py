@@ -1,0 +1,44 @@
+from __future__ import annotations
+
+from backend.app.adapters.comfyui import ComfyUiWorkflowAdapter
+from backend.app.services.provisioning import COMFY_LTX25_MODEL_NAMES
+
+
+def test_ltx25_workflow_selects_packet_model_pack() -> None:
+    adapter = object.__new__(ComfyUiWorkflowAdapter)
+    prompt = {
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "bf16.safetensors"}},
+        "2": {
+            "class_type": "CLIPLoader",
+            "_meta": {"title": "Load CLIP - Text Encoder"},
+            "inputs": {"clip_name": "bf16.safetensors"},
+        },
+        "3": {
+            "class_type": "CLIPLoader",
+            "_meta": {"title": "Load CLIP - Text Enhancer"},
+            "inputs": {"clip_name": "bf16.safetensors"},
+        },
+        "4": {
+            "class_type": "VAELoader",
+            "_meta": {"title": "Load Video VAE"},
+            "inputs": {"vae_name": "bf16.safetensors"},
+        },
+        "5": {
+            "class_type": "VAELoader",
+            "_meta": {"title": "Load Audio VAE"},
+            "inputs": {"vae_name": "bf16.safetensors"},
+        },
+        "6": {
+            "class_type": "LTXInputParameters",
+            "inputs": {"value_2": "", "value_3": False, "value_5": 8, "ckpt_name": "old.safetensors"},
+        },
+    }
+
+    adapter._set_ltx25_model_files(prompt)
+
+    assert prompt["1"]["inputs"]["unet_name"] == COMFY_LTX25_MODEL_NAMES["transformer"]
+    assert prompt["2"]["inputs"]["clip_name"] == COMFY_LTX25_MODEL_NAMES["text_encoder"]
+    assert prompt["3"]["inputs"]["clip_name"] == COMFY_LTX25_MODEL_NAMES["text_enhancer"]
+    assert prompt["4"]["inputs"]["vae_name"] == COMFY_LTX25_MODEL_NAMES["video_vae"]
+    assert prompt["5"]["inputs"]["vae_name"] == COMFY_LTX25_MODEL_NAMES["audio_vae"]
+    assert prompt["6"]["inputs"]["ckpt_name"] == COMFY_LTX25_MODEL_NAMES["transformer"]

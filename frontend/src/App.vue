@@ -113,9 +113,9 @@ type HealthPayload = {
 const health = ref<HealthPayload | null>(null);
 const provisioning = ref<ProvisioningPayload | null>(null);
 const backends = ref<BackendInfo[]>([]);
-const selectedBatchBackend = ref("comfyui-ltx23");
+const selectedBatchBackend = ref("comfyui-ltx25");
 const batchFile = ref<File | null>(null);
-const selectedDirectBackend = ref("comfyui-ltx23");
+const selectedDirectBackend = ref("comfyui-ltx25");
 const directForm = ref({
   title: "Manual generation",
   prompt: "A dynamic futuristic city with cinematic motion and clear subject focus.",
@@ -520,7 +520,7 @@ onBeforeUnmount(() => {
       </div>
       <div class="hero-status">
         <span class="status-pill" :data-ready="appReady">{{ provisioning?.status ?? health?.status ?? "loading" }}</span>
-        <p>Backend: <strong>{{ health?.defaultBackend ?? "comfyui-ltx23" }}</strong></p>
+        <p>Backend: <strong>{{ health?.defaultBackend ?? "comfyui-ltx25" }}</strong></p>
         <p>Queue: <strong>{{ health?.queuedJobs ?? 0 }}</strong></p>
       </div>
     </section>
@@ -528,7 +528,7 @@ onBeforeUnmount(() => {
     <section v-if="!appReady" class="provisioning-panel">
       <div class="panel-head">
         <div>
-          <h2>Подготовка LTX 2.3</h2>
+          <h2>Подготовка LTX 2.5</h2>
           <p>{{ provisioning?.message ?? "Проверяю состояние запуска..." }}</p>
         </div>
         <strong>{{ provisioningPercent }}%</strong>

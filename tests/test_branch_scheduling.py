@@ -31,7 +31,7 @@ def _runtime():
 def _provisioning(*, ltx_ready: bool, longcat_ready: bool) -> dict:
     return {
         "branches": {
-            "comfyui-ltx23": {
+            "comfyui-ltx25": {
                 "ready": ltx_ready,
                 "status": "ready" if ltx_ready else "downloading",
                 "progressPercent": 100 if ltx_ready else 45,
@@ -59,7 +59,7 @@ def test_longcat_starts_without_waiting_for_ltx(monkeypatch) -> None:
     selected = asyncio.run(
         _service()._wait_for_ready_backend(
             _runtime(),
-            ["comfyui-ltx23", "longcat-video-avatar"],
+            ["comfyui-ltx25", "longcat-video-avatar"],
         )
     )
 
@@ -78,11 +78,11 @@ def test_ltx_starts_without_waiting_for_longcat(monkeypatch) -> None:
     selected = asyncio.run(
         _service()._wait_for_ready_backend(
             _runtime(),
-            ["comfyui-ltx23", "longcat-video-avatar"],
+            ["comfyui-ltx25", "longcat-video-avatar"],
         )
     )
 
-    assert selected == "comfyui-ltx23"
+    assert selected == "comfyui-ltx25"
 
 
 def test_failed_branch_does_not_block_other_branch_from_starting(monkeypatch) -> None:
@@ -97,27 +97,27 @@ def test_failed_branch_does_not_block_other_branch_from_starting(monkeypatch) ->
     selected = asyncio.run(
         _service()._wait_for_ready_backend(
             _runtime(),
-            ["comfyui-ltx23", "longcat-video-avatar"],
+            ["comfyui-ltx25", "longcat-video-avatar"],
         )
     )
 
-    assert selected == "comfyui-ltx23"
+    assert selected == "comfyui-ltx25"
 
 
 def test_generation_branches_are_isolated_on_the_single_gpu() -> None:
     service = _service()
     service._adapters = {
-        "comfyui-ltx23": object(),
+        "comfyui-ltx25": object(),
         "longcat-video-avatar": object(),
     }
     service._process_variant = AsyncMock()
-    runtime = SimpleNamespace(snapshot=SimpleNamespace(backend="comfyui-ltx23"))
+    runtime = SimpleNamespace(snapshot=SimpleNamespace(backend="comfyui-ltx25"))
     work_items = [(object(), object(), {})]
 
     asyncio.run(
         service._process_generation_branch(runtime, "longcat-video-avatar", work_items)
     )
-    asyncio.run(service._process_generation_branch(runtime, "comfyui-ltx23", work_items))
+    asyncio.run(service._process_generation_branch(runtime, "comfyui-ltx25", work_items))
 
     first = service._process_variant.await_args_list[0].kwargs
     second = service._process_variant.await_args_list[1].kwargs
@@ -137,11 +137,11 @@ def test_configured_backend_can_queue_before_its_download_finishes() -> None:
         notes="still downloading",
     )
     service._adapters = {
-        "comfyui-ltx23": SimpleNamespace(info=lambda: unavailable),
+        "comfyui-ltx25": SimpleNamespace(info=lambda: unavailable),
         "longcat-video-avatar": SimpleNamespace(info=lambda: unavailable),
     }
 
-    service._ensure_backend_can_queue("comfyui-ltx23")
+    service._ensure_backend_can_queue("comfyui-ltx25")
     service._ensure_backend_can_queue("longcat-video-avatar")
 
     service._settings.enable_longcat = False

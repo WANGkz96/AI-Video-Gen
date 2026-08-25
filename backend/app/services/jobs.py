@@ -308,12 +308,12 @@ class JobService:
         registry["ltx-video-2"] = PlannedAdapter(
             "ltx-video-2",
             "LTX Video 2",
-            "Use 'comfyui-ltx23' instead.",
+            "Use 'comfyui-ltx25' instead.",
         )
         registry["ltx-video-2-distilled"] = PlannedAdapter(
             "ltx-video-2-distilled",
             "LTX Video 2 Distilled",
-            "Use 'comfyui-ltx23' instead.",
+            "Use 'comfyui-ltx25' instead.",
         )
         registry["hunyuan-video"] = PlannedAdapter(
             "hunyuan-video",

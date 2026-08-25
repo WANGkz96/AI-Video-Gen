@@ -155,19 +155,19 @@ class Settings:
             temp_dir=temp_dir,
             ltx_runtime_repo_dir=ltx_runtime_repo_dir,
             models_dir=models_dir,
-            generator_backend=os.getenv("GENERATOR_BACKEND", "comfyui-ltx23"),
+            generator_backend=os.getenv("GENERATOR_BACKEND", "comfyui-ltx25"),
             generator_api_url=os.getenv("GENERATOR_API_URL", "http://127.0.0.1:18188"),
             comfyui_root=comfyui_root,
             comfyui_t2v_workflow=Path(
                 os.getenv(
                     "COMFYUI_T2V_WORKFLOW",
-                    "/workspace/ComfyUI/blueprints/Text to Video (LTX-2.3).json",
+                    "/workspace/ComfyUI/blueprints/LTX-2.5_T2V_I2V_Single_Stage_Distilled.json",
                 )
             ).resolve(),
             comfyui_i2v_workflow=Path(
                 os.getenv(
                     "COMFYUI_I2V_WORKFLOW",
-                    "/workspace/ComfyUI/blueprints/Image to Video (LTX-2.3).json",
+                    "/workspace/ComfyUI/blueprints/LTX-2.5_T2V_I2V_Single_Stage_Distilled.json",
                 )
             ).resolve(),
             comfyui_output_prefix=os.getenv("COMFYUI_OUTPUT_PREFIX", "video/AI_Video_Gen"),
