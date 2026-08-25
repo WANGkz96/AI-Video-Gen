@@ -14,7 +14,10 @@ cd "${ROOT_DIR}"
 # Python 3.12 powers the service/ComfyUI. LongCat remains isolated in a Python
 # 3.10 uv environment, so its requirements cannot disturb ComfyUI.
 if ! command -v uv >/dev/null 2>&1; then
-  python3 -m pip install uv
+  # Packet's Ubuntu 24.04 image marks the system Python as externally
+  # managed (PEP 668). uv is only a bootstrap utility here; the project
+  # itself is installed into its own virtual environments below.
+  python3 -m pip install --break-system-packages uv
 fi
 export PATH="${HOME}/.local/bin:${PATH}"
 
