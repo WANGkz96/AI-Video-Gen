@@ -58,8 +58,6 @@ def test_ltx25_workflow_sets_resolution_on_joint_input_node() -> None:
             "inputs": {
                 "width": 960,
                 "height": 544,
-                "strength": 0.7,
-                "bypass": False,
             },
         }
     }

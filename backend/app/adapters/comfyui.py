@@ -432,12 +432,15 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
                 raise AdapterUnavailableError("LTX 2.5 workflow does not expose the 'use image input' control.")
 
     def _set_ltx25_resolution(self, prompt: dict[str, dict], *, width: int, height: int) -> None:
+        found = False
         for node in prompt.values():
             inputs = node.setdefault("inputs", {})
-            if {"width", "height", "strength", "bypass"}.issubset(inputs):
+            if {"width", "height"}.issubset(inputs):
                 inputs["width"] = int(width)
                 inputs["height"] = int(height)
-                return
+                found = True
+        if found:
+            return
 
         if self._settings.comfyui_t2v_workflow == self._settings.comfyui_i2v_workflow:
             raise AdapterUnavailableError("LTX 2.5 workflow does not expose video width and height controls.")
