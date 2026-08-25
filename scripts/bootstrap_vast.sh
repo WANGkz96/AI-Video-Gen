@@ -145,7 +145,10 @@ ensure_apt_packages git
 PYTHON_BIN="$(resolve_python)"
 echo "Using Python interpreter: ${PYTHON_BIN} ($("${PYTHON_BIN}" -V 2>&1))"
 
-if ! "${PYTHON_BIN}" -m venv --help >/dev/null 2>&1; then
+if ! "${PYTHON_BIN}" -m ensurepip --version >/dev/null 2>&1; then
+  # Ubuntu's minimal GPU images can provide Python 3.12 but omit ensurepip.
+  # Checking only `python -m venv --help` does not catch that missing runtime
+  # dependency: the help command succeeds, while actual venv creation fails.
   if [ "${PYTHON_BIN}" = "/usr/bin/python3.12" ] || [ "${PYTHON_BIN}" = "python3.12" ]; then
     ensure_apt_packages python3.12-venv python3-pip
   else
