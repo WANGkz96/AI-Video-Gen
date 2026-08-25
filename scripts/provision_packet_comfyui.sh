@@ -20,10 +20,18 @@ sync_repo() {
   local target="$2"
   local ref="$3"
   if [ ! -d "${target}/.git" ]; then
-    git clone --filter=blob:none "${repo_url}" "${target}"
+    # The Packet bootstrap creates ComfyUI's persistent model/custom-node
+    # directories before this script runs.  `git clone <url> <target>` rejects
+    # that otherwise harmless non-empty directory, so initialise the checkout
+    # in place.  This also keeps future model caches outside Git's control.
+    mkdir -p "${target}"
+    git -C "${target}" init -q
+    git -C "${target}" remote add origin "${repo_url}"
+  else
+    git -C "${target}" remote set-url origin "${repo_url}"
   fi
   git -C "${target}" fetch --depth=1 origin "${ref}"
-  git -C "${target}" checkout --detach FETCH_HEAD
+  git -C "${target}" checkout --detach --force FETCH_HEAD
 }
 
 if command -v apt-get >/dev/null 2>&1; then
