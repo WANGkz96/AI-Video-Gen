@@ -179,7 +179,11 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
 
         self._set_prompt_text(prompt, request.resolvedPrompt or request.prompt)
         self._set_negative_prompt(prompt, request.resolvedNegativePrompt or request.negativePrompt)
-        self._set_primitive_number(prompt, ("Duration", "duration in seconds"), request.durationSec)
+        self._set_primitive_number(
+            prompt,
+            ("Duration", "duration in seconds", "duration in seconds (determines frames #)"),
+            request.durationSec,
+        )
         self._set_primitive_number(prompt, ("Frame Rate", "fps (frames per second)"), request.fps)
         self._set_ltx25_resolution(prompt, width=request.width, height=request.height)
         self._set_image_mode(prompt, use_i2v=use_i2v)

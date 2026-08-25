@@ -68,3 +68,22 @@ def test_ltx25_workflow_sets_resolution_on_joint_input_node() -> None:
 
     assert prompt["5514"]["inputs"]["width"] == 1280
     assert prompt["5514"]["inputs"]["height"] == 720
+
+
+def test_ltx25_workflow_accepts_official_duration_control_title() -> None:
+    adapter = object.__new__(ComfyUiWorkflowAdapter)
+    prompt = {
+        "5512": {
+            "class_type": "PrimitiveFloat",
+            "_meta": {"title": "duration in seconds (determines frames #)"},
+            "inputs": {"value": 5.0},
+        }
+    }
+
+    adapter._set_primitive_number(
+        prompt,
+        ("Duration", "duration in seconds", "duration in seconds (determines frames #)"),
+        8,
+    )
+
+    assert prompt["5512"]["inputs"]["value"] == 8.0
