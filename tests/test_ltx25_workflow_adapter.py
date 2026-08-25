@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from backend.app.adapters.comfyui import ComfyUiWorkflowAdapter
 from backend.app.services.provisioning import COMFY_LTX25_MODEL_NAMES
 
@@ -42,3 +44,27 @@ def test_ltx25_workflow_selects_packet_model_pack() -> None:
     assert prompt["4"]["inputs"]["vae_name"] == COMFY_LTX25_MODEL_NAMES["video_vae"]
     assert prompt["5"]["inputs"]["vae_name"] == COMFY_LTX25_MODEL_NAMES["audio_vae"]
     assert prompt["6"]["inputs"]["ckpt_name"] == COMFY_LTX25_MODEL_NAMES["transformer"]
+
+
+def test_ltx25_workflow_sets_resolution_on_joint_input_node() -> None:
+    adapter = object.__new__(ComfyUiWorkflowAdapter)
+    adapter._settings = SimpleNamespace(
+        comfyui_t2v_workflow="ltx25.json",
+        comfyui_i2v_workflow="ltx25.json",
+    )
+    prompt = {
+        "5514": {
+            "class_type": "LTXVPreprocess",
+            "inputs": {
+                "width": 960,
+                "height": 544,
+                "strength": 0.7,
+                "bypass": False,
+            },
+        }
+    }
+
+    adapter._set_ltx25_resolution(prompt, width=1280, height=720)
+
+    assert prompt["5514"]["inputs"]["width"] == 1280
+    assert prompt["5514"]["inputs"]["height"] == 720
