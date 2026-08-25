@@ -30,6 +30,7 @@ def test_auth_disabled_allows_api_requests(monkeypatch):
     response = client.get("/api/health")
 
     assert response.status_code == 200
+    assert response.json()["acceptingJobs"] is True
 
 
 def test_auth_enabled_keeps_public_monitoring_routes_open(monkeypatch):

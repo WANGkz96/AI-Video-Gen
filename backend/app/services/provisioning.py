@@ -157,6 +157,50 @@ def get_provisioning_status(settings: Settings) -> dict[str, Any]:
     ltx_ready = not missing and not missing_workflows and comfy_ready
     longcat = _check_longcat(settings)
     longcat_ready = not settings.enable_longcat or longcat["ready"]
+    if not settings.enable_ltx:
+        ltx_status = "disabled"
+        ltx_message = "LTX 2.3 is not required for this instance."
+        ltx_progress_percent = 100.0
+        ltx_error = None
+    elif ltx_ready:
+        ltx_status = "ready"
+        ltx_message = "LTX 2.3 and ComfyUI are ready."
+        ltx_progress_percent = 100.0
+        ltx_error = None
+    elif downloader_status in {"downloading", "retrying", "verifying"}:
+        ltx_status = downloader_status
+        ltx_message = str(downloader_message or "Downloading required LTX 2.3 files.")
+        ltx_progress_percent = progress_percent
+        ltx_error = None
+    elif downloader_status == "error":
+        ltx_status = "error"
+        ltx_message = str(downloader_error or downloader_message or "Model download failed.")
+        ltx_progress_percent = progress_percent
+        ltx_error = downloader_error or downloader_message
+    elif missing:
+        ltx_status = "missing"
+        ltx_message = "Required LTX 2.3 model files are missing."
+        ltx_progress_percent = progress_percent
+        ltx_error = None
+    elif missing_workflows:
+        ltx_status = "missing"
+        ltx_message = "Required ComfyUI workflow files are missing."
+        ltx_progress_percent = progress_percent
+        ltx_error = None
+    else:
+        ltx_status = "waiting_comfy"
+        ltx_message = comfy_error or "Waiting for ComfyUI API."
+        ltx_progress_percent = progress_percent
+        ltx_error = None
+
+    ltx = {
+        "required": settings.enable_ltx,
+        "ready": ltx_ready,
+        "status": ltx_status,
+        "message": ltx_message,
+        "progressPercent": max(0.0, min(100.0, ltx_progress_percent)),
+        "error": ltx_error,
+    }
     ready = ltx_ready and longcat_ready
     if ready:
         status = "ready"
@@ -209,6 +253,13 @@ def get_provisioning_status(settings: Settings) -> dict[str, Any]:
         "requirements": {
             "ltx": settings.enable_ltx,
             "longcatVideoAvatar": settings.enable_longcat,
+        },
+        "branches": {
+            "comfyui-ltx23": ltx,
+            "longcat-video-avatar": {
+                **longcat,
+                "ready": longcat_ready,
+            },
         },
         "longcat": longcat,
     }

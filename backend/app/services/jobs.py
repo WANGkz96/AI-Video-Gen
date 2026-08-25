@@ -89,12 +89,14 @@ class JobService:
         active_jobs = sum(
             1
             for runtime in self._jobs.values()
-            if runtime.snapshot.status in {"queued", "running"}
+            if runtime.snapshot.status in {"queued", "running", "waiting_for_backend"}
         )
         provisioning = get_provisioning_status(self._settings)
         return {
             "status": "ok" if provisioning["ready"] else provisioning["status"],
             "ready": provisioning["ready"],
+            "apiReady": True,
+            "acceptingJobs": True,
             "defaultBackend": self._settings.generator_backend,
             "queuedJobs": self._queue.qsize(),
             "activeJobs": active_jobs,
@@ -132,9 +134,9 @@ class JobService:
             for variant in video.variants
         )
         if has_regular_segments:
-            self._ensure_backend_can_run(selected_backend)
+            self._ensure_backend_can_queue(selected_backend)
         if has_dialogue_scenes:
-            self._ensure_backend_can_run(LongCatAvatarAdapter.key)
+            self._ensure_backend_can_queue(LongCatAvatarAdapter.key)
         total_videos = len(batch.videos)
         total_variants = sum(len(video.variants) for video in batch.videos)
         total_segments = sum(
@@ -330,11 +332,18 @@ class JobService:
         )
         return registry
 
-    def _ensure_backend_can_run(self, backend: str) -> None:
+    def _ensure_backend_can_queue(self, backend: str) -> None:
         if backend not in self._adapters:
             raise ValueError(f"Unknown backend '{backend}'.")
         info = self._adapters[backend].info()
-        if not info.available:
+        if info.available and not info.requiresDownload:
+            return
+        provisionable = (
+            backend == ComfyUiWorkflowAdapter.key and self._settings.enable_ltx
+        ) or (
+            backend == LongCatAvatarAdapter.key and self._settings.enable_longcat
+        )
+        if not provisionable:
             raise AdapterUnavailableError(info.notes or f"Backend '{backend}' is unavailable.")
 
     def _positive_int(
@@ -617,13 +626,13 @@ class JobService:
         await self._broadcast_snapshot(runtime)
         await self._log(runtime, "info", "Processing started.")
 
-        adapter = self._adapters[runtime.snapshot.backend]
         result_doc: dict[str, Any] = {
             "schemaVersion": "video-pipeline.external-generation.output.v1",
             "generatedAt": utc_now().isoformat(),
             "videos": [],
             "errors": [],
         }
+        work_items: list[tuple[VideoInfo, VariantInfo, dict[str, Any]]] = []
 
         for video in runtime.batch.videos:
             video_entry = {
@@ -651,8 +660,36 @@ class JobService:
                     self._write_snapshot(runtime)
                     await self._broadcast_snapshot(runtime)
                     continue
-                await self._process_variant(runtime, adapter, video, variant, variant_entry)
+                work_items.append((video, variant, variant_entry))
             result_doc["videos"].append(video_entry)
+
+        pending_backends: list[str] = []
+        if any(
+            variant.manifest is not None and bool(variant.manifest.segments)
+            for _, variant, _ in work_items
+        ):
+            pending_backends.append(runtime.snapshot.backend)
+        if any(
+            variant.manifest is not None and bool(variant.manifest.dialogueScenes)
+            for _, variant, _ in work_items
+        ) and LongCatAvatarAdapter.key not in pending_backends:
+            pending_backends.append(LongCatAvatarAdapter.key)
+
+        while pending_backends:
+            backend = await self._wait_for_ready_backend(runtime, pending_backends)
+            runtime.snapshot.status = "running"
+            runtime.snapshot.updatedAt = utc_now()
+            self._write_snapshot(runtime)
+            await self._broadcast_snapshot(runtime)
+            await self._log(
+                runtime,
+                "info",
+                f"Backend '{backend}' is ready; starting its generation branch.",
+            )
+            self._release_adapters(except_backend=backend)
+            await self._process_generation_branch(runtime, backend, work_items)
+            pending_backends.remove(backend)
+            await self._log(runtime, "info", f"Generation branch '{backend}' completed.")
 
         result_doc["generatedAt"] = utc_now().isoformat()
         validation_errors = self._validate_result(runtime, result_doc)
@@ -680,6 +717,111 @@ class JobService:
             f"Processing finished with status '{runtime.snapshot.status}'.",
         )
 
+    async def _process_generation_branch(
+        self,
+        runtime: JobRuntime,
+        backend: str,
+        work_items: list[tuple[VideoInfo, VariantInfo, dict[str, Any]]],
+    ) -> None:
+        adapter = self._adapters[backend]
+        process_segments = backend == runtime.snapshot.backend
+        process_dialogue_scenes = backend == LongCatAvatarAdapter.key
+        if not process_segments and not process_dialogue_scenes:
+            raise AdapterUnavailableError(f"Unsupported batch generation branch '{backend}'.")
+
+        for video, variant, variant_entry in work_items:
+            await self._process_variant(
+                runtime,
+                adapter,
+                video,
+                variant,
+                variant_entry,
+                process_segments=process_segments,
+                process_dialogue_scenes=process_dialogue_scenes,
+            )
+
+    def _backend_readiness(
+        self,
+        backend: str,
+        provisioning: dict[str, Any],
+    ) -> dict[str, Any]:
+        branch = (provisioning.get("branches") or {}).get(backend)
+        if isinstance(branch, dict):
+            return branch
+        adapter = self._adapters.get(backend)
+        if adapter is None:
+            return {
+                "ready": False,
+                "status": "error",
+                "message": f"Backend '{backend}' is not registered.",
+                "error": "backend_not_registered",
+            }
+        info = adapter.info()
+        return {
+            "ready": info.available and not info.requiresDownload,
+            "status": "ready" if info.available and not info.requiresDownload else info.status,
+            "message": info.notes or info.description,
+            "error": None,
+        }
+
+    async def _wait_for_ready_backend(
+        self,
+        runtime: JobRuntime,
+        pending_backends: list[str],
+    ) -> str:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._settings.backend_ready_timeout_sec
+        last_status = ""
+
+        while True:
+            provisioning = await asyncio.to_thread(get_provisioning_status, self._settings)
+            states = {
+                backend: self._backend_readiness(backend, provisioning)
+                for backend in pending_backends
+            }
+            for backend in pending_backends:
+                if states[backend].get("ready") is True:
+                    return backend
+
+            terminal_failures = [
+                (backend, state)
+                for backend, state in states.items()
+                if str(state.get("status") or "").lower() == "error" or state.get("error")
+            ]
+            if terminal_failures and len(terminal_failures) == len(pending_backends):
+                details = "; ".join(
+                    (
+                        f"{backend}: "
+                        f"{state.get('error') or state.get('message') or state.get('status')}"
+                    )
+                    for backend, state in terminal_failures
+                )
+                raise AdapterUnavailableError(
+                    f"All pending generation backends failed provisioning: {details}"
+                )
+
+            status_text = "; ".join(
+                (
+                    f"{backend}={state.get('status') or 'waiting'}"
+                    f" ({float(state.get('progressPercent') or 0):.1f}%)"
+                )
+                for backend, state in states.items()
+            )
+            runtime.snapshot.status = "waiting_for_backend"
+            runtime.snapshot.updatedAt = utc_now()
+            self._write_snapshot(runtime)
+            await self._broadcast_snapshot(runtime)
+            if status_text != last_status:
+                last_status = status_text
+                await self._log(runtime, "info", f"Waiting for generation backend: {status_text}")
+
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise TimeoutError(
+                    "Timed out waiting for a pending generation backend: " + status_text
+                )
+            await asyncio.sleep(min(self._settings.backend_ready_poll_sec, remaining))
+
     async def _process_variant(
         self,
         runtime: JobRuntime,
@@ -687,12 +829,16 @@ class JobService:
         video: VideoInfo,
         variant: VariantInfo,
         variant_entry: dict[str, Any],
+        *,
+        process_segments: bool = True,
+        process_dialogue_scenes: bool = True,
     ) -> None:
         manifest = variant.manifest
         assert manifest is not None
         segment_variant_count = self._resolve_segment_variant_count(runtime.batch, video, manifest)
 
-        for segment in sorted(manifest.segments, key=lambda item: item.segmentIndex):
+        segments = manifest.segments if process_segments else []
+        for segment in sorted(segments, key=lambda item: item.segmentIndex):
             await self._log(
                 runtime,
                 "info",
@@ -786,14 +932,11 @@ class JobService:
                 await self._broadcast_snapshot(runtime)
                 await self._log(runtime, "error", f"Segment {segment.segmentId} failed: {exc}")
 
+        dialogue_scenes = manifest.dialogueScenes if process_dialogue_scenes else []
         longcat_adapter = self._adapters.get(LongCatAvatarAdapter.key)
-        if manifest.dialogueScenes and not isinstance(longcat_adapter, LongCatAvatarAdapter):
+        if dialogue_scenes and not isinstance(longcat_adapter, LongCatAvatarAdapter):
             raise AdapterUnavailableError("LongCat Video Avatar adapter is not registered.")
-        if manifest.dialogueScenes and isinstance(adapter, ComfyUiWorkflowAdapter):
-            await self._log(runtime, "info", "Releasing ComfyUI LTX models before LongCat scenes.")
-            await asyncio.to_thread(adapter.release)
-            await asyncio.sleep(2.0)
-        for scene in sorted(manifest.dialogueScenes, key=lambda item: item.sceneIndex):
+        for scene in sorted(dialogue_scenes, key=lambda item: item.sceneIndex):
             await self._process_dialogue_scene(
                 runtime,
                 longcat_adapter,

@@ -120,6 +120,8 @@ write_runtime_env() {
   write_env_value "AI_VIDEO_GEN_PROVISIONING_STATUS" "${AI_VIDEO_GEN_PROVISIONING_STATUS}"
   write_env_value "AI_VIDEO_GEN_ENABLE_LTX" "${AI_VIDEO_GEN_ENABLE_LTX:-1}"
   write_env_value "AI_VIDEO_GEN_ENABLE_LONGCAT" "${AI_VIDEO_GEN_ENABLE_LONGCAT:-0}"
+  write_env_value "AI_VIDEO_GEN_BACKEND_READY_POLL_SEC" "${AI_VIDEO_GEN_BACKEND_READY_POLL_SEC:-5}"
+  write_env_value "AI_VIDEO_GEN_BACKEND_READY_TIMEOUT_SEC" "${AI_VIDEO_GEN_BACKEND_READY_TIMEOUT_SEC:-5400}"
   write_env_value "LONGCAT_REPO_DIR" "${LONGCAT_REPO_DIR:-/workspace/LongCat-Video}"
   write_env_value "LONGCAT_AVATAR_CHECKPOINT_DIR" "${LONGCAT_AVATAR_CHECKPOINT_DIR:-/workspace/LongCat-Video/weights/LongCat-Video-Avatar-1.5}"
   write_env_value "LONGCAT_CONDA_ENV_DIR" "${LONGCAT_CONDA_ENV_DIR:-/opt/conda/envs/longcat-video}"
