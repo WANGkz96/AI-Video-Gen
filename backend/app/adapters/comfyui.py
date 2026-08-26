@@ -425,6 +425,24 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
             if "Text to Video" in title:
                 inputs["value"] = not use_i2v
 
+        # The workflow converter currently flattens the official
+        # ``bypass_i2v`` widget into a PrimitiveBoolean plus a ComfyNotNode.
+        # The Boolean node itself has the generic title ``Boolean``, so use
+        # the stable semantic title on the linked Not node to find it.
+        for node in prompt.values():
+            title = str((node.get("_meta") or {}).get("title") or "").lower()
+            if node.get("class_type") != "ComfyNotNode" or not any(
+                marker in title for marker in ("use image", "bypass_i2v")
+            ):
+                continue
+            link = node.setdefault("inputs", {}).get("value")
+            if not isinstance(link, list) or not link:
+                continue
+            control = prompt.get(str(link[0]))
+            if control and control.get("class_type") == "PrimitiveBoolean":
+                control.setdefault("inputs", {})["value"] = bool(use_i2v)
+                found_ltx25_control = True
+
         if use_i2v and not found_ltx25_control:
             # Older blueprints do not need this generated field; their image
             # connection is wired below. The current LTX 2.5 template does.

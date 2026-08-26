@@ -85,3 +85,23 @@ def test_ltx25_workflow_accepts_official_duration_control_title() -> None:
     )
 
     assert prompt["5512"]["inputs"]["value"] == 8.0
+
+
+def test_ltx25_workflow_sets_converted_bypass_i2v_boolean() -> None:
+    adapter = object.__new__(ComfyUiWorkflowAdapter)
+    prompt = {
+        "5014:5506": {
+            "class_type": "PrimitiveBoolean",
+            "_meta": {"title": "Boolean"},
+            "inputs": {"value": False},
+        },
+        "5014:5019": {
+            "class_type": "ComfyNotNode",
+            "_meta": {"title": "Not (use image > bypass_i2v)"},
+            "inputs": {"value": ["5014:5506", 0]},
+        },
+    }
+
+    adapter._set_image_mode(prompt, use_i2v=True)
+
+    assert prompt["5014:5506"]["inputs"]["value"] is True
