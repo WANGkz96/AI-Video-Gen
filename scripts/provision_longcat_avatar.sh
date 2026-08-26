@@ -48,9 +48,11 @@ if command -v apt-get >/dev/null 2>&1; then
   rm -rf /var/lib/apt/lists/*
 fi
 if [ ! -d "${LONGCAT_REPO_DIR}/.git" ]; then
-  git clone "${LONGCAT_REPO_URL}" "${LONGCAT_REPO_DIR}"
+  # The runtime only needs the pinned checkout. Avoid downloading the full
+  # LongCat history/tags on the small ephemeral Packet root disk.
+  git clone --depth 1 --no-tags "${LONGCAT_REPO_URL}" "${LONGCAT_REPO_DIR}"
 fi
-git -C "${LONGCAT_REPO_DIR}" fetch --all --tags --prune
+git -C "${LONGCAT_REPO_DIR}" fetch --depth 1 origin "${LONGCAT_REPO_REF}"
 git -C "${LONGCAT_REPO_DIR}" checkout "${LONGCAT_REPO_REF}"
 "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/scripts/patch_longcat_runtime.py" --repo "${LONGCAT_REPO_DIR}"
 

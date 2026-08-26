@@ -34,11 +34,11 @@ AI_VIDEO_GEN_PROVISIONING_STATUS="${STATUS_FILE}" \
 LONGCAT_CONDA_ENV_DIR="${LONGCAT_CONDA_ENV_DIR:-/workspace/.venvs/longcat-video}" \
 bash "${ROOT_DIR}/scripts/bootstrap_vast.sh"
 
-COMFYUI_ROOT="${COMFY_ROOT}" \
-COMFYUI_PORT="18188" \
 # ComfyUI shares the application's Python 3.12 virtual environment.  Packet's
 # base Ubuntu image marks its system interpreter as externally managed, while
 # the venv is exactly where its runtime dependencies belong.
+COMFYUI_ROOT="${COMFY_ROOT}" \
+COMFYUI_PORT="18188" \
 COMFY_PYTHON="${COMFY_PYTHON:-${ROOT_DIR}/.venv/bin/python}" \
 bash "${ROOT_DIR}/scripts/provision_packet_comfyui.sh"
 
