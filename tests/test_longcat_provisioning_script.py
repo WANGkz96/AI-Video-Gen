@@ -13,3 +13,5 @@ def test_longcat_provisioning_supports_vast_templates_without_conda() -> None:
     assert 'if ! "${PYTHON_BIN}" -m pip --version' in script
     assert 'uv pip install --python "${PYTHON_BIN}" pip' in script
     assert "torchvision|torchaudio|numpy|sympy|libsndfile1" in script
+    assert 'git clone --depth 1 --no-tags' in script
+    assert 'git -C "${LONGCAT_REPO_DIR}" fetch --depth 1 origin' in script
