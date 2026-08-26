@@ -186,6 +186,7 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
         )
         self._set_primitive_number(prompt, ("Frame Rate", "fps (frames per second)"), request.fps)
         self._set_ltx25_resolution(prompt, width=request.width, height=request.height)
+        self._set_ltx25_audio_batch_size(prompt)
         self._set_image_mode(prompt, use_i2v=use_i2v)
         self._set_ltx25_model_files(prompt)
         self._set_noise_seed(prompt, seed)
@@ -462,6 +463,23 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
 
         if self._settings.comfyui_t2v_workflow == self._settings.comfyui_i2v_workflow:
             raise AdapterUnavailableError("LTX 2.5 workflow does not expose video width and height controls.")
+
+    def _set_ltx25_audio_batch_size(self, prompt: dict[str, dict]) -> None:
+        """Keep the joint LTX audio latent at one sample per generated video.
+
+        The current workflow converter can map the visual workflow's widget
+        values onto the generated API fields in the wrong order: the official
+        ``[frames_number, frame_rate, batch_size]`` widgets may arrive as
+        ``batch_size=25`` (the frame rate) instead of ``batch_size=1``. The
+        service submits one segment at a time, so a non-one audio batch cannot
+        be combined with the single video latent and ComfyUI fails in
+        ``pack_latents`` with a tensor shape mismatch.
+        """
+
+        for node in prompt.values():
+            if node.get("class_type") != "LTXVEmptyLatentAudio":
+                continue
+            node.setdefault("inputs", {})["batch_size"] = 1
 
     def _set_ltx25_model_files(self, prompt: dict[str, dict]) -> None:
         """Select the exact local LTX 2.5 pack in the converted Comfy graph.

@@ -68,6 +68,29 @@ def test_ltx25_workflow_sets_resolution_on_joint_input_node() -> None:
     assert prompt["5514"]["inputs"]["height"] == 720
 
 
+def test_ltx25_workflow_keeps_audio_latent_batch_aligned_with_video() -> None:
+    adapter = object.__new__(ComfyUiWorkflowAdapter)
+    prompt = {
+        "5514:3980": {
+            "class_type": "LTXVEmptyLatentAudio",
+            "inputs": {
+                "frames_number": ["5014:4988", 0],
+                "frame_rate": ["5514:5000", 0],
+                "batch_size": 25,
+            },
+        },
+        "other": {
+            "class_type": "LTXVEmptyLatentAudio",
+            "inputs": {"batch_size": 1},
+        },
+    }
+
+    adapter._set_ltx25_audio_batch_size(prompt)
+
+    assert prompt["5514:3980"]["inputs"]["batch_size"] == 1
+    assert prompt["other"]["inputs"]["batch_size"] == 1
+
+
 def test_ltx25_workflow_accepts_official_duration_control_title() -> None:
     adapter = object.__new__(ComfyUiWorkflowAdapter)
     prompt = {
