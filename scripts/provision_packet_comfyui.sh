@@ -49,6 +49,11 @@ sync_repo "https://github.com/SethRobinson/comfyui-workflow-to-api-converter-end
 "${COMFY_PYTHON}" -m pip install --upgrade pip "setuptools<82" wheel
 "${COMFY_PYTHON}" -m pip install -r "${COMFY_ROOT}/requirements.txt"
 "${COMFY_PYTHON}" -m pip install -r "${LTX_NODE_DIR}/requirements.txt"
+# The pinned LTX node revision still imports ``pad`` from Kornia's pyramid
+# module. Kornia 0.8.3 removed that re-export, which makes the whole custom
+# node pack fail to load (including the otherwise present LTXFloatToInt node).
+# Keep the reproducible Packet bootstrap on the last compatible release.
+"${COMFY_PYTHON}" -m pip install "kornia<0.8.3"
 
 install -m 0644 "${LTX_NODE_DIR}/example_workflows/2.5/${WORKFLOW_NAME}" "${BLUEPRINT_DIR}/${WORKFLOW_NAME}"
 
