@@ -7,6 +7,10 @@ COMFY_ROOT="${COMFYUI_ROOT:-/workspace/ComfyUI}"
 GENERATOR_API_URL="${GENERATOR_API_URL:-http://127.0.0.1:18188}"
 AI_VIDEO_GEN_ENABLE_LTX="${AI_VIDEO_GEN_ENABLE_LTX:-1}"
 AI_VIDEO_GEN_ENABLE_LONGCAT="${AI_VIDEO_GEN_ENABLE_LONGCAT:-0}"
+# Packet's 150 GB ephemeral root cannot retain both LongCat's runtime weights
+# and LTX 2.5 while a mixed batch is running.  The worker releases LongCat
+# only after its branch has finished and LTX is still pending.
+AI_VIDEO_GEN_RELEASE_LONGCAT_WEIGHTS_AFTER_BRANCH="${AI_VIDEO_GEN_RELEASE_LONGCAT_WEIGHTS_AFTER_BRANCH:-1}"
 STATUS_FILE="${AI_VIDEO_GEN_PROVISIONING_STATUS:-${ROOT_DIR}/data/provisioning-status.json}"
 
 cd "${ROOT_DIR}"
@@ -30,6 +34,7 @@ COMFYUI_T2V_WORKFLOW="${COMFY_ROOT}/blueprints/LTX-2.5_T2V_I2V_Single_Stage_Dist
 COMFYUI_I2V_WORKFLOW="${COMFY_ROOT}/blueprints/LTX-2.5_T2V_I2V_Single_Stage_Distilled.json" \
 AI_VIDEO_GEN_ENABLE_LTX="${AI_VIDEO_GEN_ENABLE_LTX}" \
 AI_VIDEO_GEN_ENABLE_LONGCAT="${AI_VIDEO_GEN_ENABLE_LONGCAT}" \
+AI_VIDEO_GEN_RELEASE_LONGCAT_WEIGHTS_AFTER_BRANCH="${AI_VIDEO_GEN_RELEASE_LONGCAT_WEIGHTS_AFTER_BRANCH}" \
 AI_VIDEO_GEN_PROVISIONING_STATUS="${STATUS_FILE}" \
 LONGCAT_CONDA_ENV_DIR="${LONGCAT_CONDA_ENV_DIR:-/workspace/.venvs/longcat-video}" \
 bash "${ROOT_DIR}/scripts/bootstrap_vast.sh"

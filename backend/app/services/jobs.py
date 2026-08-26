@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import shutil
 import sys
 import zipfile
 from dataclasses import dataclass, field
@@ -690,6 +691,17 @@ class JobService:
             await self._process_generation_branch(runtime, backend, work_items)
             pending_backends.remove(backend)
             await self._log(runtime, "info", f"Generation branch '{backend}' completed.")
+            if (
+                backend == LongCatAvatarAdapter.key
+                and ComfyUiWorkflowAdapter.key in pending_backends
+                and self._settings.release_longcat_weights_after_branch
+            ):
+                released_path = await asyncio.to_thread(self._release_longcat_weights)
+                await self._log(
+                    runtime,
+                    "info",
+                    f"Released LongCat weights at {released_path} before the pending LTX branch.",
+                )
 
         result_doc["generatedAt"] = utc_now().isoformat()
         validation_errors = self._validate_result(runtime, result_doc)
@@ -739,6 +751,24 @@ class JobService:
                 process_segments=process_segments,
                 process_dialogue_scenes=process_dialogue_scenes,
             )
+
+    def _release_longcat_weights(self) -> Path:
+        """Free the ephemeral-model payload once this job no longer needs Avatar.
+
+        The Packet worker has a single job consumer, so at this point no other
+        active request can still be using LongCat.  Removing the whole weights
+        directory (the base LongCat assets and Avatar delta) makes room for the
+        LTX 2.5 model pack on Packet's 150 GB ephemeral disk.
+        """
+        weights_dir = (self._settings.longcat_repo_dir / "weights").resolve()
+        checkpoint_dir = self._settings.longcat_checkpoint_dir.resolve()
+        if weights_dir not in checkpoint_dir.parents:
+            raise RuntimeError(
+                "Refusing to release LongCat weights: checkpoint directory is outside the LongCat weights root."
+            )
+        if weights_dir.exists():
+            shutil.rmtree(weights_dir)
+        return weights_dir
 
     def _backend_readiness(
         self,

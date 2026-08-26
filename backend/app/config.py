@@ -118,6 +118,7 @@ class Settings:
     ai_video_gen_api_token: str | None
     enable_ltx: bool
     enable_longcat: bool
+    release_longcat_weights_after_branch: bool
     backend_ready_poll_sec: float
     backend_ready_timeout_sec: float
     longcat_repo_dir: Path
@@ -201,6 +202,10 @@ class Settings:
             ai_video_gen_api_token=api_token,
             enable_ltx=_parse_bool(os.getenv("AI_VIDEO_GEN_ENABLE_LTX"), True),
             enable_longcat=_parse_bool(os.getenv("AI_VIDEO_GEN_ENABLE_LONGCAT"), False),
+            release_longcat_weights_after_branch=_parse_bool(
+                os.getenv("AI_VIDEO_GEN_RELEASE_LONGCAT_WEIGHTS_AFTER_BRANCH"),
+                False,
+            ),
             backend_ready_poll_sec=max(
                 0.25,
                 float(os.getenv("AI_VIDEO_GEN_BACKEND_READY_POLL_SEC", "5")),
