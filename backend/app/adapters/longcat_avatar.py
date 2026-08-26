@@ -148,22 +148,29 @@ class LongCatAvatarAdapter(BaseGeneratorAdapter):
         stdout, _ = await process.communicate()
         log_text = stdout.decode("utf-8", errors="replace")
         (run_dir / "longcat.log").write_text(log_text, encoding="utf-8")
-        if process.returncode != 0:
-            raise RuntimeError(
-                f"LongCat exited with code {process.returncode}: {log_text[-6000:]}"
-            )
-
         generated_files = sorted(
             generated_dir.rglob("*.mp4"),
             key=lambda item: item.stat().st_mtime,
         )
         if not generated_files:
+            if process.returncode != 0:
+                raise RuntimeError(
+                    f"LongCat exited with code {process.returncode}: {log_text[-6000:]}"
+                )
             raise FileNotFoundError(f"LongCat created no mp4 in {generated_dir.as_posix()}")
         preferred_name = f"video_continue_{num_segments}.mp4"
         source_video = next(
             (item for item in reversed(generated_files) if item.name == preferred_name),
             generated_files[-1],
         )
+        # Current LongCat Avatar builds can abort while tearing down NCCL after
+        # they have already written the complete final MP4.  The rendered file
+        # is the actual contract of this adapter; do not discard valid media
+        # solely because that post-render cleanup returned a non-zero status.
+        if process.returncode != 0 and not source_video.is_file():
+            raise RuntimeError(
+                f"LongCat exited with code {process.returncode}: {log_text[-6000:]}"
+            )
         await self._normalize_video(source_video, request)
         return GenerationArtifact(
             modelName=self.key,
@@ -177,6 +184,12 @@ class LongCatAvatarAdapter(BaseGeneratorAdapter):
                 "durationSec": request.durationSec,
                 "fps": 25,
                 "substitutedSilentTracks": substituted_silent_tracks,
+                "processReturnCode": process.returncode,
+                "postRenderCleanupWarning": (
+                    f"LongCat exited with code {process.returncode} after writing the output MP4."
+                    if process.returncode != 0
+                    else None
+                ),
             },
         )
 
