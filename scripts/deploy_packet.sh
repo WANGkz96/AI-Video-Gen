@@ -72,6 +72,19 @@ if [ "${AI_VIDEO_GEN_ENABLE_LONGCAT}" = "1" ]; then
   echo $! > "${ROOT_DIR}/.run/longcat-provision.pid"
 fi
 
+if [ "${AI_VIDEO_GEN_ENABLE_LTX}" = "1" ] && [ "${AI_VIDEO_GEN_ENABLE_LONGCAT}" = "1" ]; then
+  nohup env \
+    LTX_PID_FILE="${ROOT_DIR}/.run/ltx25-download.pid" \
+    LONGCAT_WEIGHTS_DIR="${LONGCAT_REPO_DIR:-/workspace/LongCat-Video}/weights" \
+    PACKET_DISK_GUARD_PATH="/workspace" \
+    AI_VIDEO_GEN_PACKET_LTX_MIN_FREE_GB="${AI_VIDEO_GEN_PACKET_LTX_MIN_FREE_GB:-70}" \
+    AI_VIDEO_GEN_PACKET_LTX_GUARD_POLL_SEC="${AI_VIDEO_GEN_PACKET_LTX_GUARD_POLL_SEC:-5}" \
+    bash "${ROOT_DIR}/scripts/guard_packet_ltx_disk.sh" \
+    > "${ROOT_DIR}/.run/ltx25-disk-guard.out.log" \
+    2> "${ROOT_DIR}/.run/ltx25-disk-guard.err.log" < /dev/null &
+  echo $! > "${ROOT_DIR}/.run/ltx25-disk-guard.pid"
+fi
+
 # The API starts before model downloads complete. JobService independently
 # schedules each branch as soon as its own provisioning becomes ready.
 PORT="${PORT}" \
