@@ -508,6 +508,19 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
                 inputs["ckpt_name"] = COMFY_LTX25_MODEL_NAMES["transformer"]
                 configured.add("transformer_input")
 
+        # The official LTX 2.5 blueprint exposes the transformer filename as
+        # an input of a model-loading subgraph. The converter expands most of
+        # that subgraph but currently leaves the Gemma API nodes pointing at
+        # the omitted reroute (for example ``5004:5513``). Keep the optional
+        # API branch structurally valid even when the local branch is selected
+        # by supplying the same local transformer filename directly.
+        for node in prompt.values():
+            if node.get("class_type") != "GemmaAPITextEncode":
+                continue
+            ckpt_name = node.setdefault("inputs", {}).get("ckpt_name")
+            if isinstance(ckpt_name, list) and ckpt_name and str(ckpt_name[0]) not in prompt:
+                node["inputs"]["ckpt_name"] = COMFY_LTX25_MODEL_NAMES["transformer"]
+
         expected = {"transformer", "text_encoder", "text_enhancer", "video_vae", "audio_vae"}
         missing = expected - configured
         if missing:

@@ -105,3 +105,38 @@ def test_ltx25_workflow_sets_converted_bypass_i2v_boolean() -> None:
     adapter._set_image_mode(prompt, use_i2v=True)
 
     assert prompt["5014:5506"]["inputs"]["value"] is True
+
+
+def test_ltx25_workflow_repairs_dangling_gemma_api_model_link() -> None:
+    adapter = object.__new__(ComfyUiWorkflowAdapter)
+    prompt = {
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "bf16.safetensors"}},
+        "2": {
+            "class_type": "CLIPLoader",
+            "_meta": {"title": "Load CLIP - Text Encoder"},
+            "inputs": {"clip_name": "bf16.safetensors"},
+        },
+        "3": {
+            "class_type": "CLIPLoader",
+            "_meta": {"title": "Load CLIP - Text Enhancer"},
+            "inputs": {"clip_name": "bf16.safetensors"},
+        },
+        "4": {
+            "class_type": "VAELoader",
+            "_meta": {"title": "Load Video VAE"},
+            "inputs": {"vae_name": "bf16.safetensors"},
+        },
+        "5": {
+            "class_type": "VAELoader",
+            "_meta": {"title": "Load Audio VAE"},
+            "inputs": {"vae_name": "bf16.safetensors"},
+        },
+        "6": {
+            "class_type": "GemmaAPITextEncode",
+            "inputs": {"ckpt_name": ["5004:5513", 0]},
+        },
+    }
+
+    adapter._set_ltx25_model_files(prompt)
+
+    assert prompt["6"]["inputs"]["ckpt_name"] == COMFY_LTX25_MODEL_NAMES["transformer"]
