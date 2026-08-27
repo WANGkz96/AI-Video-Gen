@@ -62,9 +62,130 @@ class LongCatAvatarAdapter(BaseGeneratorAdapter):
         raise AdapterUnavailableError("LongCat Video Avatar only accepts dialogue scene requests.")
 
     async def generate_scene(self, request: DialogueSceneGenerationRequest) -> GenerationArtifact:
+        artifacts, errors = await self.generate_scenes([request])
+        if request.sceneId in errors:
+            raise RuntimeError(errors[request.sceneId])
+        return artifacts[request.sceneId]
+
+    async def generate_scenes(
+        self,
+        requests: list[DialogueSceneGenerationRequest],
+    ) -> tuple[dict[str, GenerationArtifact], dict[str, str]]:
+        """Generate one dialogue batch while retaining LongCat weights in VRAM.
+
+        The upstream demo reloads every model inside its one-scene entrypoint.
+        A job normally contains several independent dialogue scenes, so the
+        maintained batch runner loads the INT8/distilled runtime once, renders
+        those scenes serially, and returns an artifact per scene.
+        """
         info = self.info()
         if not info.available:
             raise AdapterUnavailableError(info.notes or "LongCat Video Avatar is unavailable.")
+        if not requests:
+            return {}, {}
+
+        prepared = [self._prepare_scene(request) for request in requests]
+        batch_root = requests[0].outputPath.parent.parent / "longcat-batches"
+        batch_root.mkdir(parents=True, exist_ok=True)
+        batch_key = "-".join(f"{request.sceneIndex:03d}" for request in requests)
+        batch_dir = batch_root / f"batch-{batch_key}"
+        batch_dir.mkdir(parents=True, exist_ok=True)
+        batch_manifest = batch_dir / "batch-input.json"
+        result_manifest = batch_dir / "batch-result.json"
+        batch_manifest.write_text(
+            json.dumps(
+                {
+                    "scenes": [
+                        {
+                            "sceneId": item["request"].sceneId,
+                            "inputJson": item["inputPath"].as_posix(),
+                            "outputDir": item["generatedDir"].as_posix(),
+                            "numSegments": item["numSegments"],
+                        }
+                        for item in prepared
+                    ]
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        runner = self._root / "run_longcat_avatar_batch.py"
+        if not runner.is_file():
+            raise AdapterUnavailableError(
+                "LongCat batch runner is unavailable. Re-run LongCat provisioning for this instance."
+            )
+        command = [
+            self._torchrun.as_posix(),
+            "--master_port",
+            str(29600 + (requests[0].sceneIndex % 300)),
+            "--nproc_per_node=1",
+            runner.as_posix(),
+            "--batch_manifest",
+            batch_manifest.as_posix(),
+            "--result_manifest",
+            result_manifest.as_posix(),
+            "--resolution",
+            "480p",
+            "--checkpoint_dir",
+            self._checkpoint.as_posix(),
+            "--use_distill",
+            "--use_int8",
+        ]
+        env = os.environ.copy()
+        env.setdefault("PYTHONUNBUFFERED", "1")
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            cwd=self._root,
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        stdout, _ = await process.communicate()
+        log_text = stdout.decode("utf-8", errors="replace")
+        log_path = batch_dir / "longcat-batch.log"
+        log_path.write_text(log_text, encoding="utf-8")
+        if not result_manifest.is_file():
+            raise RuntimeError(
+                f"LongCat batch exited with code {process.returncode} without a result manifest: {log_text[-6000:]}"
+            )
+        results = json.loads(result_manifest.read_text(encoding="utf-8"))
+        by_scene = {str(item.get("sceneId")): item for item in results.get("scenes", [])}
+        artifacts: dict[str, GenerationArtifact] = {}
+        errors: dict[str, str] = {}
+        for item in prepared:
+            request = item["request"]
+            result = by_scene.get(request.sceneId)
+            if not result or result.get("status") != "completed":
+                errors[request.sceneId] = str((result or {}).get("error") or "LongCat did not return a scene result.")
+                continue
+            source_video = Path(str(result.get("outputPath") or ""))
+            if not source_video.is_file():
+                errors[request.sceneId] = f"LongCat returned a missing output: {source_video.as_posix()}"
+                continue
+            await self._normalize_video(source_video, request)
+            artifacts[request.sceneId] = GenerationArtifact(
+                modelName=self.key,
+                modelVersion="LongCat-Video-Avatar-1.5@6b3f4b8-int8-distill-batched",
+                outputPath=request.outputPath,
+                debug={
+                    "input": item["inputPath"].as_posix(),
+                    "rawOutput": source_video.as_posix(),
+                    "log": log_path.as_posix(),
+                    "batchManifest": batch_manifest.as_posix(),
+                    "batchResult": result_manifest.as_posix(),
+                    "batchSceneCount": len(requests),
+                    "numSegments": item["numSegments"],
+                    "durationSec": request.durationSec,
+                    "fps": 25,
+                    "substitutedSilentTracks": item["substitutedSilentTracks"],
+                    "processReturnCode": process.returncode,
+                    "processReturnedNonZeroAfterResults": process.returncode != 0,
+                },
+            )
+        return artifacts, errors
+
+    def _prepare_scene(self, request: DialogueSceneGenerationRequest) -> dict[str, object]:
 
         request.outputPath.parent.mkdir(parents=True, exist_ok=True)
         run_dir = request.outputPath.parent / "longcat-runtime"
@@ -111,87 +232,14 @@ class LongCatAvatarAdapter(BaseGeneratorAdapter):
         }
         input_path = run_dir / "avatar_input.json"
         input_path.write_text(json.dumps(input_doc, ensure_ascii=False, indent=2), encoding="utf-8")
-        command = [
-            self._torchrun.as_posix(),
-            "--master_port",
-            str(29600 + (request.sceneIndex % 300)),
-            "--nproc_per_node=1",
-            "run_demo_avatar_multi_audio_to_video.py",
-            "--input_json",
-            input_path.as_posix(),
-            "--output_dir",
-            generated_dir.as_posix(),
-            "--resolution",
-            "480p",
-            "--num_segments",
-            str(num_segments),
-            "--ref_img_index",
-            "30",
-            "--mask_frame_range",
-            "5",
-            "--checkpoint_dir",
-            self._checkpoint.as_posix(),
-            "--model_type",
-            "avatar-v1.5",
-            "--use_distill",
-            "--use_int8",
-        ]
-        env = os.environ.copy()
-        env.setdefault("PYTHONUNBUFFERED", "1")
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            cwd=self._root,
-            env=env,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        stdout, _ = await process.communicate()
-        log_text = stdout.decode("utf-8", errors="replace")
-        (run_dir / "longcat.log").write_text(log_text, encoding="utf-8")
-        generated_files = sorted(
-            generated_dir.rglob("*.mp4"),
-            key=lambda item: item.stat().st_mtime,
-        )
-        if not generated_files:
-            if process.returncode != 0:
-                raise RuntimeError(
-                    f"LongCat exited with code {process.returncode}: {log_text[-6000:]}"
-                )
-            raise FileNotFoundError(f"LongCat created no mp4 in {generated_dir.as_posix()}")
-        preferred_name = f"video_continue_{num_segments}.mp4"
-        source_video = next(
-            (item for item in reversed(generated_files) if item.name == preferred_name),
-            generated_files[-1],
-        )
-        # Current LongCat Avatar builds can abort while tearing down NCCL after
-        # they have already written the complete final MP4.  The rendered file
-        # is the actual contract of this adapter; do not discard valid media
-        # solely because that post-render cleanup returned a non-zero status.
-        if process.returncode != 0 and not source_video.is_file():
-            raise RuntimeError(
-                f"LongCat exited with code {process.returncode}: {log_text[-6000:]}"
-            )
-        await self._normalize_video(source_video, request)
-        return GenerationArtifact(
-            modelName=self.key,
-            modelVersion="LongCat-Video-Avatar-1.5@6b3f4b8-int8-distill",
-            outputPath=request.outputPath,
-            debug={
-                "input": input_path.as_posix(),
-                "rawOutput": source_video.as_posix(),
-                "log": (run_dir / "longcat.log").as_posix(),
-                "numSegments": num_segments,
-                "durationSec": request.durationSec,
-                "fps": 25,
-                "substitutedSilentTracks": substituted_silent_tracks,
-                "processReturnCode": process.returncode,
-                "postRenderCleanupWarning": (
-                    f"LongCat exited with code {process.returncode} after writing the output MP4."
-                    if process.returncode != 0
-                    else None
-                ),
-            },
-        )
+        return {
+            "request": request,
+            "runDir": run_dir,
+            "generatedDir": generated_dir,
+            "inputPath": input_path,
+            "numSegments": num_segments,
+            "substitutedSilentTracks": substituted_silent_tracks,
+        }
 
     @staticmethod
     def _pcm_wav_is_fully_silent(path: Path) -> bool:

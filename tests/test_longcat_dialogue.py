@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import wave
 
 import httpx
@@ -132,6 +133,51 @@ def test_longcat_adapter_keeps_spoken_track_untouched(tmp_path: Path) -> None:
     _write_pcm_wav(spoken, [0, 1, -1, 0])
 
     assert LongCatAvatarAdapter._pcm_wav_is_fully_silent(spoken) is False
+
+
+def test_longcat_batch_runner_is_provisioned_and_keeps_model_loading_outside_scene_loop() -> None:
+    root = Path(__file__).resolve().parents[1]
+    provision = (root / "scripts" / "provision_longcat_avatar.sh").read_text(encoding="utf-8")
+    runner = (root / "scripts" / "run_longcat_avatar_batch.py").read_text(encoding="utf-8")
+
+    assert "run_longcat_avatar_batch.py" in provision
+    assert "LongCat models loaded; rendering scenes without further weight reloads" in runner
+    assert "for index, scene in enumerate(scenes, start=1):" in runner
+    assert runner.index("def _load_runtime") < runner.index("def _render_scene")
+
+
+def test_longcat_prepare_scene_preserves_per_scene_outputs_for_batching(tmp_path: Path) -> None:
+    adapter = object.__new__(LongCatAvatarAdapter)
+    request_dir = tmp_path / "dialogue" / "scene_01"
+    request_dir.mkdir(parents=True)
+    source_audio = tmp_path / "speaker.wav"
+    _write_pcm_wav(source_audio, [0, 1, -1, 0])
+    from backend.app.models import DialogueSceneGenerationRequest
+
+    request = DialogueSceneGenerationRequest(
+        jobId="job",
+        videoId=1,
+        projectId=1,
+        runId="run",
+        videoTitle="title",
+        variantKey="v01",
+        variantLabel="Variant 1",
+        sceneId="scene_01",
+        sceneIndex=1,
+        prompt="Two characters talk.",
+        imagePath=tmp_path / "scene.png",
+        speaker1Path=source_audio,
+        speaker2Path=source_audio,
+        durationSec=8.0,
+        outputPath=request_dir / "scene.mp4",
+    )
+
+    prepared = adapter._prepare_scene(request)
+    input_doc = json.loads(Path(prepared["inputPath"]).read_text(encoding="utf-8"))
+
+    assert prepared["numSegments"] == 3
+    assert Path(prepared["generatedDir"]).parent == request_dir / "longcat-runtime"
+    assert input_doc["cond_audio"]["person1"] == source_audio.as_posix()
 
 
 def test_comfy_release_unloads_ltx_models(monkeypatch) -> None:

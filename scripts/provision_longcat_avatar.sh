@@ -55,6 +55,7 @@ fi
 git -C "${LONGCAT_REPO_DIR}" fetch --depth 1 origin "${LONGCAT_REPO_REF}"
 git -C "${LONGCAT_REPO_DIR}" checkout "${LONGCAT_REPO_REF}"
 "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/scripts/patch_longcat_runtime.py" --repo "${LONGCAT_REPO_DIR}"
+install -m 0755 "${ROOT_DIR}/scripts/run_longcat_avatar_batch.py" "${LONGCAT_REPO_DIR}/run_longcat_avatar_batch.py"
 
 write_status "provisioning" "8" "Preparing Python 3.10 environment."
 if [ ! -x "${LONGCAT_CONDA_ENV_DIR}/bin/python" ]; then

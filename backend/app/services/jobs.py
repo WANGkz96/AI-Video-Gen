@@ -966,16 +966,154 @@ class JobService:
         longcat_adapter = self._adapters.get(LongCatAvatarAdapter.key)
         if dialogue_scenes and not isinstance(longcat_adapter, LongCatAvatarAdapter):
             raise AdapterUnavailableError("LongCat Video Avatar adapter is not registered.")
-        for scene in sorted(dialogue_scenes, key=lambda item: item.sceneIndex):
-            await self._process_dialogue_scene(
+        if dialogue_scenes:
+            await self._process_dialogue_scenes_batch(
                 runtime,
                 longcat_adapter,
                 video,
                 variant,
                 manifest,
-                scene,
+                sorted(dialogue_scenes, key=lambda item: item.sceneIndex),
                 variant_entry,
             )
+
+    async def _process_dialogue_scenes_batch(
+        self,
+        runtime: JobRuntime,
+        adapter: LongCatAvatarAdapter,
+        video: VideoInfo,
+        variant: VariantInfo,
+        manifest: VariantManifest,
+        scenes: list[ManifestDialogueScene],
+        variant_entry: dict[str, Any],
+    ) -> None:
+        prepared: list[tuple[ManifestDialogueScene, DialogueSceneGenerationRequest, dict[str, Any]]] = []
+        for scene in scenes:
+            await self._log(
+                runtime,
+                "info",
+                f"[{video.videoId}/{variant.key}] Dialogue scene {scene.sceneIndex} -> {scene.sceneId}",
+            )
+            scene_entry: dict[str, Any] = {"sceneId": scene.sceneId}
+            variant_entry["dialogueScenes"].append(scene_entry)
+            try:
+                request = self._build_dialogue_scene_request(runtime, video, variant, manifest, scene)
+                prepared.append((scene, request, scene_entry))
+            except Exception as exc:
+                await self._record_dialogue_scene_failure(runtime, scene_entry, scene.sceneId, exc)
+
+        if not prepared:
+            return
+        await self._log(
+            runtime,
+            "info",
+            (
+                f"[{video.videoId}/{variant.key}] Starting LongCat batch for {len(prepared)} dialogue scenes; "
+                "weights will load once and remain resident between scenes."
+            ),
+        )
+        try:
+            artifacts, errors = await self._generate_dialogue_scenes_with_heartbeat(
+                runtime,
+                adapter,
+                [request for _scene, request, _entry in prepared],
+            )
+        except Exception as exc:
+            for scene, _request, scene_entry in prepared:
+                await self._record_dialogue_scene_failure(runtime, scene_entry, scene.sceneId, exc)
+            return
+
+        for scene, request, scene_entry in prepared:
+            error = errors.get(scene.sceneId)
+            artifact = artifacts.get(scene.sceneId)
+            if error or artifact is None:
+                await self._record_dialogue_scene_failure(
+                    runtime,
+                    scene_entry,
+                    scene.sceneId,
+                    RuntimeError(error or "LongCat returned no artifact for dialogue scene."),
+                )
+                continue
+            await self._record_dialogue_scene_success(
+                runtime,
+                video,
+                variant,
+                scene,
+                request,
+                artifact,
+                scene_entry,
+            )
+
+    async def _record_dialogue_scene_success(
+        self,
+        runtime: JobRuntime,
+        video: VideoInfo,
+        variant: VariantInfo,
+        scene: ManifestDialogueScene,
+        request: DialogueSceneGenerationRequest,
+        artifact: GenerationArtifact,
+        scene_entry: dict[str, Any],
+    ) -> None:
+        probed = probe_video(
+            artifact.outputPath,
+            fallback_width=request.width,
+            fallback_height=request.height,
+            fallback_fps=25,
+            fallback_duration=request.durationSec,
+        )
+        self._assert_probe(artifact.outputPath, probed)
+        video_rel_path = artifact.outputPath.relative_to(runtime.workspace_dir)
+        metadata_path = artifact.outputPath.with_suffix(".json")
+        metadata_doc = {
+            "schemaVersion": "video-pipeline.external-generation.dialogue-scene.v1",
+            "generatedAt": utc_now().isoformat(),
+            "videoId": video.videoId,
+            "projectId": video.projectId,
+            "runId": video.runId,
+            "variantKey": variant.key,
+            "sceneId": scene.sceneId,
+            "sceneIndex": scene.sceneIndex,
+            "timeline": scene.timeline.model_dump(mode="json"),
+            "prompt": request.prompt,
+            "model": {"name": artifact.modelName, "version": artifact.modelVersion},
+            "render": probed,
+            "files": {
+                "videoFile": video_rel_path.as_posix(),
+                "imageFile": scene.generation.image.get("file"),
+                "speaker1File": scene.audio.speaker1File,
+                "speaker2File": scene.audio.speaker2File,
+            },
+            "debug": artifact.debug,
+        }
+        self._write_json(metadata_path, metadata_doc)
+        scene_entry.update(
+            {
+                "videoFile": video_rel_path.as_posix(),
+                "durationSec": probed["durationSec"],
+                "width": probed["width"],
+                "height": probed["height"],
+                "fps": probed["fps"],
+            }
+        )
+        runtime.snapshot.completedSegments += 1
+        runtime.snapshot.updatedAt = utc_now()
+        self._write_snapshot(runtime)
+        await self._broadcast_snapshot(runtime)
+        await self._log(runtime, "info", f"Dialogue scene {scene.sceneId} completed via LongCat.")
+
+    async def _record_dialogue_scene_failure(
+        self,
+        runtime: JobRuntime,
+        scene_entry: dict[str, Any],
+        scene_id: str,
+        error: Exception,
+    ) -> None:
+        scene_entry.update({"status": "failed", "error": str(error)})
+        runtime.snapshot.failedSegments += 1
+        runtime.snapshot.updatedAt = utc_now()
+        self._write_snapshot(runtime)
+        await self._broadcast_snapshot(runtime)
+        await self._log(runtime, "error", f"Dialogue scene {scene_id} failed: {error}")
 
     async def _process_dialogue_scene(
         self,
@@ -1058,6 +1196,25 @@ class JobService:
         request: DialogueSceneGenerationRequest,
     ) -> GenerationArtifact:
         generation_task = asyncio.create_task(adapter.generate_scene(request))
+        try:
+            while True:
+                try:
+                    return await asyncio.wait_for(asyncio.shield(generation_task), timeout=30.0)
+                except TimeoutError:
+                    runtime.snapshot.updatedAt = utc_now()
+                    self._write_snapshot(runtime)
+                    await self._broadcast_snapshot(runtime)
+        finally:
+            if not generation_task.done():
+                generation_task.cancel()
+
+    async def _generate_dialogue_scenes_with_heartbeat(
+        self,
+        runtime: JobRuntime,
+        adapter: LongCatAvatarAdapter,
+        requests: list[DialogueSceneGenerationRequest],
+    ) -> tuple[dict[str, GenerationArtifact], dict[str, str]]:
+        generation_task = asyncio.create_task(adapter.generate_scenes(requests))
         try:
             while True:
                 try:
