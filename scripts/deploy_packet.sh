@@ -42,10 +42,14 @@ bash "${ROOT_DIR}/scripts/bootstrap_vast.sh"
 # ComfyUI shares the application's Python 3.12 virtual environment.  Packet's
 # base Ubuntu image marks its system interpreter as externally managed, while
 # the venv is exactly where its runtime dependencies belong.
-COMFYUI_ROOT="${COMFY_ROOT}" \
-COMFYUI_PORT="18188" \
-COMFY_PYTHON="${COMFY_PYTHON:-${ROOT_DIR}/.venv/bin/python}" \
-bash "${ROOT_DIR}/scripts/provision_packet_comfyui.sh"
+if [ "${AI_VIDEO_GEN_ENABLE_LTX}" = "1" ]; then
+  COMFYUI_ROOT="${COMFY_ROOT}" \
+  COMFYUI_PORT="18188" \
+  COMFY_PYTHON="${COMFY_PYTHON:-${ROOT_DIR}/.venv/bin/python}" \
+  bash "${ROOT_DIR}/scripts/provision_packet_comfyui.sh"
+else
+  echo "Skipping ComfyUI provisioning: this Packet job has no LTX branch."
+fi
 
 mkdir -p "${ROOT_DIR}/.run"
 if [ "${AI_VIDEO_GEN_ENABLE_LTX}" = "1" ]; then
