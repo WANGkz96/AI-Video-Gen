@@ -19,6 +19,7 @@ import datetime
 import json
 import math
 import os
+import time
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
@@ -290,6 +291,7 @@ def _target_masks(image: PIL.Image.Image, input_data: dict[str, Any], device: in
 
 
 def _render_scene(runtime: Runtime, item: dict[str, Any]) -> str:
+    scene_started = time.perf_counter()
     input_path = Path(item["inputJson"]).resolve()
     output_dir = Path(item["outputDir"]).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -299,11 +301,17 @@ def _render_scene(runtime: Runtime, item: dict[str, Any]) -> str:
     height, width = _resolution_size(runtime.resolution, str(input_data.get("target_orientation", "")).lower())
     image = load_image(input_data["cond_image"])
     masks = _target_masks(image, input_data, runtime.local_rank)
+    audio_started = time.perf_counter()
     left_full, right_full, _background, merge_path = _make_audio_embeddings(runtime, input_data, num_segments)
+    print(
+        f"[METRIC] scene={item.get('sceneId', input_path.stem)} audioPreparationSec={time.perf_counter() - audio_started:.3f}",
+        flush=True,
+    )
     generator = torch.Generator(device=runtime.local_rank).manual_seed(42)
     try:
         audio_start = 0
         audio_emb = _window_audio_embeddings(runtime, left_full, right_full, audio_start)
+        inference_started = time.perf_counter()
         output, latent = runtime.pipe.generate_ai2v(
             image=image,
             prompt=prompt,
@@ -318,6 +326,11 @@ def _render_scene(runtime: Runtime, item: dict[str, Any]) -> str:
             audio_emb=audio_emb,
             ref_target_masks=masks,
             use_distill=runtime.use_distill,
+        )
+        print(
+            f"[METRIC] scene={item.get('sceneId', input_path.stem)} segment=1/{num_segments} "
+            f"ai2vInferenceSec={time.perf_counter() - inference_started:.3f}",
+            flush=True,
         )
         output = output[0]
         video = [PIL.Image.fromarray((output[index] * 255).astype(np.uint8)) for index in range(output.shape[0])]
@@ -335,6 +348,7 @@ def _render_scene(runtime: Runtime, item: dict[str, Any]) -> str:
             audio_start += runtime.audio_stride * (runtime.num_frames - runtime.num_cond_frames)
             audio_emb = _window_audio_embeddings(runtime, left_full, right_full, audio_start)
             segment_prompt = prompt if prompt_schedule is None else prompt_schedule[min(segment_index, len(prompt_schedule) - 1)]
+            inference_started = time.perf_counter()
             output, latent = runtime.pipe.generate_avc(
                 video=current_video,
                 video_latent=latent,
@@ -359,6 +373,11 @@ def _render_scene(runtime: Runtime, item: dict[str, Any]) -> str:
                 ref_target_masks=masks,
                 use_distill=runtime.use_distill,
             )
+            print(
+                f"[METRIC] scene={item.get('sceneId', input_path.stem)} segment={segment_index + 1}/{num_segments} "
+                f"avcInferenceSec={time.perf_counter() - inference_started:.3f}",
+                flush=True,
+            )
             output = output[0]
             next_video = [PIL.Image.fromarray((output[index] * 255).astype(np.uint8)) for index in range(output.shape[0])]
             del output
@@ -377,6 +396,10 @@ def _render_scene(runtime: Runtime, item: dict[str, Any]) -> str:
         final_path = output_dir / final_name
         if not final_path.is_file():
             raise FileNotFoundError(f"LongCat did not write {final_path}")
+        print(
+            f"[METRIC] scene={item.get('sceneId', input_path.stem)} totalSec={time.perf_counter() - scene_started:.3f}",
+            flush=True,
+        )
         return final_path.as_posix()
     finally:
         if os.path.exists(merge_path):
