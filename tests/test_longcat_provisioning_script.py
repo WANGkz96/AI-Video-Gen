@@ -15,6 +15,8 @@ def test_longcat_provisioning_supports_vast_templates_without_conda() -> None:
     assert "torchvision|torchaudio|numpy|sympy|libsndfile1" in script
     assert 'git clone --depth 1 --no-tags' in script
     assert 'git -C "${LONGCAT_REPO_DIR}" fetch --depth 1 origin' in script
+    assert 'exec 9>"${ROOT_DIR}/data/tmp/longcat-provision.lock"' in script
+    assert "flock -n 9" in script
 
 
 def test_packet_avatar_only_boot_skips_irrelevant_comfyui_runtime() -> None:

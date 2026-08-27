@@ -40,6 +40,22 @@ fail() {
 }
 trap fail ERR
 
+mkdir -p "${ROOT_DIR}/data/tmp"
+# The API can receive a retry while the instance bootstrap is still running.
+# A second installer would race the first one over git/conda/pip/HF cache and
+# can leave an otherwise valid Avatar setup only partially installed.  Keep a
+# process-held advisory lock for this instance; a later retry may safely run
+# once the first provisioning process has exited.
+if command -v flock >/dev/null 2>&1; then
+  exec 9>"${ROOT_DIR}/data/tmp/longcat-provision.lock"
+  if ! flock -n 9; then
+    echo "LongCat provisioning is already running; leaving the active installer in control." >&2
+    exit 0
+  fi
+else
+  echo "flock is unavailable; continuing without a LongCat provisioning lock." >&2
+fi
+
 write_status "provisioning" "2" "Preparing LongCat runtime."
 if command -v apt-get >/dev/null 2>&1; then
   export DEBIAN_FRONTEND=noninteractive
