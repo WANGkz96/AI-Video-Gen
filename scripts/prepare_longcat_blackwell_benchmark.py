@@ -27,15 +27,22 @@ PROMPT_SUFFIX = " ".join(
 
 
 def _dialogue_scenes(batch: dict[str, Any]) -> list[dict[str, Any]]:
-    variants = batch.get("variants")
-    if not isinstance(variants, list):
-        raise ValueError("Batch must contain variants[].")
-    for variant in variants:
-        manifest = variant.get("manifest") if isinstance(variant, dict) else None
-        scenes = manifest.get("dialogueScenes") if isinstance(manifest, dict) else None
-        if isinstance(scenes, list):
-            return [scene for scene in scenes if isinstance(scene, dict)]
-    raise ValueError("Batch contains no variants[].manifest.dialogueScenes[].")
+    # The service accepts both one-video manifests (variants[]) and the normal
+    # export archive shape (videos[].variants[]).  Benchmarks must work from
+    # the exact zip that production automation uploads.
+    variant_groups: list[Any] = [batch.get("variants")]
+    videos = batch.get("videos")
+    if isinstance(videos, list):
+        variant_groups.extend(video.get("variants") for video in videos if isinstance(video, dict))
+    for variants in variant_groups:
+        if not isinstance(variants, list):
+            continue
+        for variant in variants:
+            manifest = variant.get("manifest") if isinstance(variant, dict) else None
+            scenes = manifest.get("dialogueScenes") if isinstance(manifest, dict) else None
+            if isinstance(scenes, list):
+                return [scene for scene in scenes if isinstance(scene, dict)]
+    raise ValueError("Batch contains no variants[].manifest.dialogueScenes[] or videos[].variants[].manifest.dialogueScenes[].")
 
 
 def _required_file(root: Path, relative_path: str, label: str) -> Path:
