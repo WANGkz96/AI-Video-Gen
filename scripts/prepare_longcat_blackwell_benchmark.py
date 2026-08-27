@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import wave
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +53,29 @@ def _required_file(root: Path, relative_path: str, label: str) -> Path:
     return path
 
 
+def _make_longcat_compatible_silence(source_path: Path, output_path: Path) -> Path:
+    """Mirror the production adapter's all-silent track workaround."""
+    try:
+        with wave.open(source_path.as_posix(), "rb") as source:
+            channels = max(1, source.getnchannels())
+            sample_width = max(1, source.getsampwidth())
+            sample_rate = max(1, source.getframerate())
+            frames = bytearray(source.readframes(source.getnframes()))
+    except (OSError, EOFError, wave.Error):
+        return source_path
+    if not frames:
+        frames = bytearray(channels * sample_width * sample_rate)
+    if any(sample != (128 if sample_width == 1 else 0) for sample in frames):
+        return source_path
+    frames[0] = 129 if sample_width == 1 else 1
+    with wave.open(output_path.as_posix(), "wb") as target:
+        target.setnchannels(channels)
+        target.setsampwidth(sample_width)
+        target.setframerate(sample_rate)
+        target.writeframes(frames)
+    return output_path
+
+
 def prepare_benchmark(
     *,
     batch_path: Path,
@@ -86,6 +110,14 @@ def prepare_benchmark(
     output_dir = output_dir.resolve()
     generated_dir = output_dir / "generated"
     generated_dir.mkdir(parents=True, exist_ok=True)
+    speaker1_path = _make_longcat_compatible_silence(
+        speaker1_path,
+        output_dir / "speaker1_technical_silence.wav",
+    )
+    speaker2_path = _make_longcat_compatible_silence(
+        speaker2_path,
+        output_dir / "speaker2_technical_silence.wav",
+    )
     input_path = output_dir / "avatar_input.json"
     input_path.write_text(
         json.dumps(

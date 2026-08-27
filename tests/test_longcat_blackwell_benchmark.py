@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import wave
 
 from scripts.prepare_longcat_blackwell_benchmark import prepare_benchmark
 
@@ -60,3 +61,39 @@ def test_prepare_longcat_blackwell_benchmark_accepts_export_batch_shape(tmp_path
 
     input_doc = json.loads(Path(result["input"]).read_text(encoding="utf-8"))
     assert input_doc["target_orientation"] == "portrait"
+
+
+def test_prepare_longcat_blackwell_benchmark_rewrites_digital_silence(tmp_path: Path) -> None:
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    image = assets / "image.png"
+    image.write_bytes(b"image")
+    for name, payload in (("speaker1.wav", b"\x01\x00" * 8000), ("speaker2.wav", b"\x00\x00" * 8000)):
+        with wave.open((assets / name).as_posix(), "wb") as target:
+            target.setnchannels(1)
+            target.setsampwidth(2)
+            target.setframerate(16_000)
+            target.writeframes(payload)
+    batch = {
+        "variants": [{"manifest": {"dialogueScenes": [{
+            "sceneId": "scene_01",
+            "generation": {"prompt": "Two researchers talk.", "imageFile": "assets/image.png"},
+            "audio": {"speaker1File": "assets/speaker1.wav", "speaker2File": "assets/speaker2.wav"},
+            "output": {"width": 1920, "height": 1080},
+        }]}}]
+    }
+    batch_path = tmp_path / "batch.json"
+    batch_path.write_text(json.dumps(batch), encoding="utf-8")
+
+    result = prepare_benchmark(
+        batch_path=batch_path,
+        scene_id="scene_01",
+        output_dir=tmp_path / "benchmark",
+        num_segments=1,
+    )
+
+    input_doc = json.loads(Path(result["input"]).read_text(encoding="utf-8"))
+    silent_path = Path(input_doc["cond_audio"]["person2"])
+    assert silent_path.name == "speaker2_technical_silence.wav"
+    with wave.open(silent_path.as_posix(), "rb") as output:
+        assert output.readframes(1) == b"\x01\x00"
