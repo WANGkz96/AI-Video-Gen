@@ -119,6 +119,7 @@ class Settings:
     enable_ltx: bool
     enable_longcat: bool
     release_longcat_weights_after_branch: bool
+    longcat_branch_release_file: Path | None
     backend_ready_poll_sec: float
     backend_ready_timeout_sec: float
     longcat_repo_dir: Path
@@ -141,6 +142,12 @@ class Settings:
         frontend_dist_dir = Path(
             os.getenv("FRONTEND_DIST_DIR", REPO_ROOT / "frontend" / "dist")
         ).resolve()
+        longcat_branch_release_raw = (os.getenv("AI_VIDEO_GEN_LONGCAT_BRANCH_RELEASE_FILE") or "").strip()
+        longcat_branch_release_file = (
+            Path(longcat_branch_release_raw).expanduser().resolve()
+            if longcat_branch_release_raw
+            else None
+        )
 
         comfyui_root = Path(os.getenv("COMFYUI_ROOT", "/workspace/ComfyUI")).resolve()
         auth_required = _parse_bool(os.getenv("AI_VIDEO_GEN_AUTH_REQUIRED"), False)
@@ -206,6 +213,7 @@ class Settings:
                 os.getenv("AI_VIDEO_GEN_RELEASE_LONGCAT_WEIGHTS_AFTER_BRANCH"),
                 False,
             ),
+            longcat_branch_release_file=longcat_branch_release_file,
             backend_ready_poll_sec=max(
                 0.25,
                 float(os.getenv("AI_VIDEO_GEN_BACKEND_READY_POLL_SEC", "5")),

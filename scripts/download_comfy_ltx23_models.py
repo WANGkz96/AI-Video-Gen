@@ -4,9 +4,11 @@ import argparse
 import json
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Lock
 from urllib.parse import quote
 
 import httpx
@@ -81,6 +83,7 @@ def _env_float(name: str, fallback: float) -> float:
 
 
 DOWNLOAD_CHUNK_SIZE = max(16 * 1024, _env_int("AI_VIDEO_GEN_MODEL_DOWNLOAD_CHUNK_BYTES", 256 * 1024))
+STATUS_WRITE_LOCK = Lock()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -130,6 +133,15 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=_env_float("AI_VIDEO_GEN_MODEL_DOWNLOAD_READ_TIMEOUT", 120.0),
         help="HTTP read/write/pool timeout in seconds.",
+    )
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=_env_int("AI_VIDEO_GEN_MODEL_DOWNLOAD_CONCURRENCY", 1),
+        help=(
+            "Maximum number of model files to download concurrently. "
+            "Defaults to AI_VIDEO_GEN_MODEL_DOWNLOAD_CONCURRENCY or 1."
+        ),
     )
     parser.add_argument(
         "--base-url",
@@ -252,10 +264,14 @@ def discover_model_sizes(
 def write_json_atomic(path: Path | None, payload: dict) -> None:
     if path is None:
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(f"{path.suffix}.tmp")
-    tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp_path.replace(path)
+    # Multiple model workers report progress concurrently.  Keep the status
+    # document itself atomic and serialize its temporary-file replacement so
+    # one worker cannot replace another worker's in-flight temporary file.
+    with STATUS_WRITE_LOCK:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_suffix(f"{path.suffix}.tmp")
+        tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp_path.replace(path)
 
 
 def build_model_states(
@@ -282,7 +298,16 @@ def build_model_states(
             status = current_status or "downloading"
         else:
             total = expected_total
-            status = "ready" if is_ready(target_path) else "missing"
+            if is_ready(target_path):
+                status = "ready"
+            elif tmp_downloaded > 0:
+                # A different worker may be downloading this file.  Its
+                # partial .tmp file is the source of truth for aggregate
+                # progress while another worker owns the "current" field.
+                downloaded = tmp_downloaded
+                status = "downloading"
+            else:
+                status = "missing"
             if model.id in errors:
                 status = "error"
             if status == "ready" and not total:
@@ -655,21 +680,49 @@ def main() -> None:
         return
 
     try:
-        for index, model in enumerate(MODEL_FILES, start=1):
-            copy_hf_file(
-                model,
-                comfy_root,
-                force=args.force,
-                status_file=status_file,
-                current_index=index,
-                max_attempts=max(0, args.max_attempts),
-                retry_delay=max(1.0, args.retry_delay),
-                connect_timeout=max(1.0, args.connect_timeout),
-                read_timeout=max(1.0, args.read_timeout),
-                error_by_model=error_by_model,
-                base_urls=base_urls,
-                expected_total_by_model=expected_total_by_model,
+        max_workers = max(1, min(int(args.max_workers), len(MODEL_FILES)))
+        if max_workers == 1:
+            for index, model in enumerate(MODEL_FILES, start=1):
+                copy_hf_file(
+                    model,
+                    comfy_root,
+                    force=args.force,
+                    status_file=status_file,
+                    current_index=index,
+                    max_attempts=max(0, args.max_attempts),
+                    retry_delay=max(1.0, args.retry_delay),
+                    connect_timeout=max(1.0, args.connect_timeout),
+                    read_timeout=max(1.0, args.read_timeout),
+                    error_by_model=error_by_model,
+                    base_urls=base_urls,
+                    expected_total_by_model=expected_total_by_model,
+                )
+        else:
+            print(
+                f"[download] Downloading up to {max_workers} model files concurrently.",
+                flush=True,
             )
+            with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="ltx-model") as executor:
+                futures = {
+                    executor.submit(
+                        copy_hf_file,
+                        model,
+                        comfy_root,
+                        force=args.force,
+                        status_file=status_file,
+                        current_index=index,
+                        max_attempts=max(0, args.max_attempts),
+                        retry_delay=max(1.0, args.retry_delay),
+                        connect_timeout=max(1.0, args.connect_timeout),
+                        read_timeout=max(1.0, args.read_timeout),
+                        error_by_model=error_by_model,
+                        base_urls=base_urls,
+                        expected_total_by_model=expected_total_by_model,
+                    ): model
+                    for index, model in enumerate(MODEL_FILES, start=1)
+                }
+                for future in as_completed(futures):
+                    future.result()
         write_status(
             status_file,
             comfy_root,

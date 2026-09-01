@@ -8,6 +8,16 @@ LONGCAT_REPO_REF="${LONGCAT_REPO_REF:-6b3f4b8582a8bc3f20f795735f5383716c4ba794}"
 LONGCAT_CONDA_ENV_DIR="${LONGCAT_CONDA_ENV_DIR:-/opt/conda/envs/longcat-video}"
 LONGCAT_PROVISIONING_STATUS="${LONGCAT_PROVISIONING_STATUS:-${ROOT_DIR}/data/longcat-provisioning-status.json}"
 CONDA_BIN="${LONGCAT_CONDA_BIN:-/opt/conda/bin/conda}"
+MODEL_DOWNLOAD_CONCURRENCY="${AI_VIDEO_GEN_MODEL_DOWNLOAD_CONCURRENCY:-3}"
+
+# Hugging Face defaults to eight workers, which competes aggressively with the
+# rest of a Packet bootstrap.  Keep the per-branch fan-out bounded while still
+# allowing several independent checkpoint files to fill the available link.
+if ! [[ "${MODEL_DOWNLOAD_CONCURRENCY}" =~ ^[1-9][0-9]*$ ]]; then
+  MODEL_DOWNLOAD_CONCURRENCY=3
+elif [ "${MODEL_DOWNLOAD_CONCURRENCY}" -gt 3 ]; then
+  MODEL_DOWNLOAD_CONCURRENCY=3
+fi
 
 write_status() {
   local status="$1"
@@ -115,11 +125,13 @@ if [ -n "${HF_TOKEN:-}" ]; then
 fi
 "${HF_BIN}" download meituan-longcat/LongCat-Video \
   --local-dir "${LONGCAT_REPO_DIR}/weights/LongCat-Video" \
+  --max-workers "${MODEL_DOWNLOAD_CONCURRENCY}" \
   --include "tokenizer/**" "text_encoder/**" "vae/**" \
   "${HF_ARGS[@]}"
 write_status "downloading" "58" "LongCat runtime weights ready; downloading Avatar 1.5 INT8 components."
 "${HF_BIN}" download meituan-longcat/LongCat-Video-Avatar-1.5 \
   --local-dir "${LONGCAT_REPO_DIR}/weights/LongCat-Video-Avatar-1.5" \
+  --max-workers "${MODEL_DOWNLOAD_CONCURRENCY}" \
   --include "base_model_int8/**" "lora/**" "whisper-large-v3/**" "vocal_separator/**" "scheduler/**" \
   "${HF_ARGS[@]}"
 

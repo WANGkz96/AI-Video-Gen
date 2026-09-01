@@ -14,9 +14,16 @@ checks out the ref supplied by Video-pipeline and delegates setup to
 - a separate Python 3.10 LongCat Avatar runtime, only if the batch contains
   dialogue scenes.
 
-The API begins accepting jobs while background provisioning continues.  Its
-scheduler starts LTX or LongCat as soon as that branch reports ready and keeps
-the other branch downloading in parallel.
+The API begins accepting jobs while background provisioning continues.  A
+single-backend batch starts its model download immediately.  A mixed LongCat +
+LTX batch is intentionally serialized: LongCat downloads and renders first;
+after its results are written, the worker removes its weights and opens the LTX
+download gate.  The two large model packs therefore never compete for the
+same ephemeral disk.
+
+Model downloads within the active branch use at most three workers.  Override
+the lower value with `AI_VIDEO_GEN_MODEL_DOWNLOAD_CONCURRENCY=1` or `2`; values
+above `3` are capped to keep Packet bootstrap bandwidth and disk I/O stable.
 
 ## Storage contract
 

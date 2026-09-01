@@ -697,10 +697,18 @@ class JobService:
                 and self._settings.release_longcat_weights_after_branch
             ):
                 released_path = await asyncio.to_thread(self._release_longcat_weights)
+                release_signal = await asyncio.to_thread(self._signal_longcat_branch_release)
                 await self._log(
                     runtime,
                     "info",
-                    f"Released LongCat weights at {released_path} before the pending LTX branch.",
+                    (
+                        f"Released LongCat weights at {released_path} before the pending LTX branch."
+                        + (
+                            f" Opened the LTX download gate at {release_signal}."
+                            if release_signal
+                            else ""
+                        )
+                    ),
                 )
 
         result_doc["generatedAt"] = utc_now().isoformat()
@@ -769,6 +777,30 @@ class JobService:
         if weights_dir.exists():
             shutil.rmtree(weights_dir)
         return weights_dir
+
+    def _signal_longcat_branch_release(self) -> Path | None:
+        """Tell an optional Packet bootstrap coordinator that LTX may start.
+
+        The signal is configured only for mixed Packet jobs.  Other runtime
+        modes keep their existing independent branch scheduling unchanged.
+        """
+
+        configured_path = getattr(self._settings, "longcat_branch_release_file", None)
+        if not configured_path:
+            return None
+        signal_path = Path(configured_path).expanduser().resolve()
+        signal_path.parent.mkdir(parents=True, exist_ok=True)
+        signal_path.write_text(
+            json.dumps(
+                {
+                    "releasedAt": utc_now().isoformat(),
+                    "reason": "longcat_generation_branch_completed",
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return signal_path
 
     def _backend_readiness(
         self,

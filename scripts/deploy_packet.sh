@@ -7,11 +7,21 @@ COMFY_ROOT="${COMFYUI_ROOT:-/workspace/ComfyUI}"
 GENERATOR_API_URL="${GENERATOR_API_URL:-http://127.0.0.1:18188}"
 AI_VIDEO_GEN_ENABLE_LTX="${AI_VIDEO_GEN_ENABLE_LTX:-1}"
 AI_VIDEO_GEN_ENABLE_LONGCAT="${AI_VIDEO_GEN_ENABLE_LONGCAT:-0}"
-# Packet's 150 GB ephemeral root cannot retain both LongCat's runtime weights
-# and LTX 2.5 while a mixed batch is running.  The worker releases LongCat
-# only after its branch has finished and LTX is still pending.
+# A mixed Packet job is deliberately serialized: LongCat downloads and renders
+# first, then releases its weights before the LTX model pack starts.  This
+# avoids filling Packet's 150 GB ephemeral root and needs no process pausing.
 AI_VIDEO_GEN_RELEASE_LONGCAT_WEIGHTS_AFTER_BRANCH="${AI_VIDEO_GEN_RELEASE_LONGCAT_WEIGHTS_AFTER_BRANCH:-1}"
 STATUS_FILE="${AI_VIDEO_GEN_PROVISIONING_STATUS:-${ROOT_DIR}/data/provisioning-status.json}"
+LONGCAT_STATUS_FILE="${LONGCAT_PROVISIONING_STATUS:-${ROOT_DIR}/data/longcat-provisioning-status.json}"
+LONGCAT_RELEASE_FILE="${AI_VIDEO_GEN_LONGCAT_BRANCH_RELEASE_FILE:-${ROOT_DIR}/.run/longcat-branch-released.json}"
+MODEL_DOWNLOAD_CONCURRENCY="${AI_VIDEO_GEN_MODEL_DOWNLOAD_CONCURRENCY:-3}"
+
+if ! [[ "${MODEL_DOWNLOAD_CONCURRENCY}" =~ ^[1-9][0-9]*$ ]]; then
+  MODEL_DOWNLOAD_CONCURRENCY=3
+elif [ "${MODEL_DOWNLOAD_CONCURRENCY}" -gt 3 ]; then
+  MODEL_DOWNLOAD_CONCURRENCY=3
+fi
+export AI_VIDEO_GEN_MODEL_DOWNLOAD_CONCURRENCY="${MODEL_DOWNLOAD_CONCURRENCY}"
 
 cd "${ROOT_DIR}"
 
@@ -35,7 +45,10 @@ COMFYUI_I2V_WORKFLOW="${COMFY_ROOT}/blueprints/LTX-2.5_T2V_I2V_Single_Stage_Dist
 AI_VIDEO_GEN_ENABLE_LTX="${AI_VIDEO_GEN_ENABLE_LTX}" \
 AI_VIDEO_GEN_ENABLE_LONGCAT="${AI_VIDEO_GEN_ENABLE_LONGCAT}" \
 AI_VIDEO_GEN_RELEASE_LONGCAT_WEIGHTS_AFTER_BRANCH="${AI_VIDEO_GEN_RELEASE_LONGCAT_WEIGHTS_AFTER_BRANCH}" \
+AI_VIDEO_GEN_LONGCAT_BRANCH_RELEASE_FILE="${LONGCAT_RELEASE_FILE}" \
+AI_VIDEO_GEN_MODEL_DOWNLOAD_CONCURRENCY="${MODEL_DOWNLOAD_CONCURRENCY}" \
 AI_VIDEO_GEN_PROVISIONING_STATUS="${STATUS_FILE}" \
+LONGCAT_PROVISIONING_STATUS="${LONGCAT_STATUS_FILE}" \
 LONGCAT_CONDA_ENV_DIR="${LONGCAT_CONDA_ENV_DIR:-/workspace/.venvs/longcat-video}" \
 bash "${ROOT_DIR}/scripts/bootstrap_vast.sh"
 
@@ -52,24 +65,28 @@ else
 fi
 
 mkdir -p "${ROOT_DIR}/.run"
-if [ "${AI_VIDEO_GEN_ENABLE_LTX}" = "1" ]; then
+rm -f "${LONGCAT_RELEASE_FILE}"
+
+start_ltx_download() {
   nohup env HF_TOKEN="${HF_TOKEN:-}" HUGGING_FACE_HUB_TOKEN="${HUGGING_FACE_HUB_TOKEN:-}" \
     "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/scripts/download_comfy_ltx25_models.py" \
     --comfy-root "${COMFY_ROOT}" \
     --status-file "${STATUS_FILE}" \
+    --max-workers "${MODEL_DOWNLOAD_CONCURRENCY}" \
     --max-attempts "${AI_VIDEO_GEN_MODEL_DOWNLOAD_MAX_ATTEMPTS:-60}" \
     --retry-delay "${AI_VIDEO_GEN_MODEL_DOWNLOAD_RETRY_DELAY:-20}" \
     > "${ROOT_DIR}/.run/ltx25-download.out.log" \
     2> "${ROOT_DIR}/.run/ltx25-download.err.log" < /dev/null &
   echo $! > "${ROOT_DIR}/.run/ltx25-download.pid"
-fi
+}
 
 if [ "${AI_VIDEO_GEN_ENABLE_LONGCAT}" = "1" ]; then
   nohup env HF_TOKEN="${HF_TOKEN:-}" \
     LONGCAT_REPO_DIR="${LONGCAT_REPO_DIR:-/workspace/LongCat-Video}" \
     LONGCAT_AVATAR_CHECKPOINT_DIR="${LONGCAT_AVATAR_CHECKPOINT_DIR:-/workspace/LongCat-Video/weights/LongCat-Video-Avatar-1.5}" \
     LONGCAT_CONDA_ENV_DIR="${LONGCAT_CONDA_ENV_DIR:-/workspace/.venvs/longcat-video}" \
-    LONGCAT_PROVISIONING_STATUS="${LONGCAT_PROVISIONING_STATUS:-${ROOT_DIR}/data/longcat-provisioning-status.json}" \
+    LONGCAT_PROVISIONING_STATUS="${LONGCAT_STATUS_FILE}" \
+    AI_VIDEO_GEN_MODEL_DOWNLOAD_CONCURRENCY="${MODEL_DOWNLOAD_CONCURRENCY}" \
     bash "${ROOT_DIR}/scripts/provision_longcat_avatar.sh" \
     > "${ROOT_DIR}/.run/longcat-provision.out.log" \
     2> "${ROOT_DIR}/.run/longcat-provision.err.log" < /dev/null &
@@ -78,24 +95,35 @@ fi
 
 if [ "${AI_VIDEO_GEN_ENABLE_LTX}" = "1" ] && [ "${AI_VIDEO_GEN_ENABLE_LONGCAT}" = "1" ]; then
   nohup env \
-    LTX_PID_FILE="${ROOT_DIR}/.run/ltx25-download.pid" \
-    LONGCAT_WEIGHTS_DIR="${LONGCAT_REPO_DIR:-/workspace/LongCat-Video}/weights" \
-    PACKET_DISK_GUARD_PATH="/workspace" \
-    AI_VIDEO_GEN_PACKET_LTX_MIN_FREE_GB="${AI_VIDEO_GEN_PACKET_LTX_MIN_FREE_GB:-70}" \
-    AI_VIDEO_GEN_PACKET_LTX_GUARD_POLL_SEC="${AI_VIDEO_GEN_PACKET_LTX_GUARD_POLL_SEC:-5}" \
-    bash "${ROOT_DIR}/scripts/guard_packet_ltx_disk.sh" \
-    > "${ROOT_DIR}/.run/ltx25-disk-guard.out.log" \
-    2> "${ROOT_DIR}/.run/ltx25-disk-guard.err.log" < /dev/null &
-  echo $! > "${ROOT_DIR}/.run/ltx25-disk-guard.pid"
+    "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/scripts/coordinate_packet_model_branches.py" \
+    --longcat-status-file "${LONGCAT_STATUS_FILE}" \
+    --ltx-status-file "${STATUS_FILE}" \
+    --release-file "${LONGCAT_RELEASE_FILE}" \
+    --poll-sec "${AI_VIDEO_GEN_PACKET_BRANCH_SEQUENCE_POLL_SEC:-2}" \
+    -- \
+    "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/scripts/download_comfy_ltx25_models.py" \
+    --comfy-root "${COMFY_ROOT}" \
+    --status-file "${STATUS_FILE}" \
+    --max-workers "${MODEL_DOWNLOAD_CONCURRENCY}" \
+    --max-attempts "${AI_VIDEO_GEN_MODEL_DOWNLOAD_MAX_ATTEMPTS:-60}" \
+    --retry-delay "${AI_VIDEO_GEN_MODEL_DOWNLOAD_RETRY_DELAY:-20}" \
+    > "${ROOT_DIR}/.run/ltx25-sequence.out.log" \
+    2> "${ROOT_DIR}/.run/ltx25-sequence.err.log" < /dev/null &
+  echo $! > "${ROOT_DIR}/.run/ltx25-sequence.pid"
+elif [ "${AI_VIDEO_GEN_ENABLE_LTX}" = "1" ]; then
+  start_ltx_download
 fi
 
-# The API starts before model downloads complete. JobService independently
-# schedules each branch as soon as its own provisioning becomes ready.
+# The API starts before model downloads complete.  For a mixed batch the
+# coordinator keeps LTX unavailable until LongCat's completed branch releases
+# its model directory; single-backend batches retain immediate startup.
 PORT="${PORT}" \
 GENERATOR_BACKEND="comfyui-ltx25" \
 GENERATOR_API_URL="${GENERATOR_API_URL}" \
 COMFYUI_ROOT="${COMFY_ROOT}" \
 AI_VIDEO_GEN_PROVISIONING_STATUS="${STATUS_FILE}" \
+LONGCAT_PROVISIONING_STATUS="${LONGCAT_STATUS_FILE}" \
+AI_VIDEO_GEN_LONGCAT_BRANCH_RELEASE_FILE="${LONGCAT_RELEASE_FILE}" \
 bash "${ROOT_DIR}/scripts/run_remote_server.sh" >/dev/null
 
 echo "Packet deploy started: API port ${PORT}; ComfyUI stays private on 18188."

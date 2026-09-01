@@ -160,13 +160,14 @@ def get_provisioning_status(settings: Settings) -> dict[str, Any]:
     downloader_status = downloader.get("status") if downloader else None
     downloader_error = downloader.get("error") if downloader else None
     downloader_message = downloader.get("message") if downloader else None
+    sequence_waiting_for_longcat = downloader_status == "waiting_for_longcat"
 
     model_total = len(model_files)
     model_ready = model_total - len(missing)
     model_percent = round((model_ready / model_total) * 100, 2) if model_total else 100.0
     progress_percent = float((downloader or {}).get("progressPercent") or model_percent)
 
-    ltx_ready = not missing and not missing_workflows and comfy_ready
+    ltx_ready = not sequence_waiting_for_longcat and not missing and not missing_workflows and comfy_ready
     longcat = _check_longcat(settings)
     longcat_ready = not settings.enable_longcat or longcat["ready"]
     if not settings.enable_ltx:
@@ -178,6 +179,11 @@ def get_provisioning_status(settings: Settings) -> dict[str, Any]:
         ltx_status = "ready"
         ltx_message = "LTX 2.5 and ComfyUI are ready."
         ltx_progress_percent = 100.0
+        ltx_error = None
+    elif downloader_status in {"waiting_for_longcat", "starting"}:
+        ltx_status = str(downloader_status)
+        ltx_message = str(downloader_message or "Waiting to start the LTX 2.5 model download.")
+        ltx_progress_percent = progress_percent
         ltx_error = None
     elif downloader_status in {"downloading", "retrying", "verifying"}:
         ltx_status = downloader_status
@@ -223,6 +229,9 @@ def get_provisioning_status(settings: Settings) -> dict[str, Any]:
         status = longcat["status"]
         message = longcat["message"]
         progress_percent = longcat["progressPercent"]
+    elif downloader_status in {"waiting_for_longcat", "starting"}:
+        status = str(downloader_status)
+        message = str(downloader_message or "Waiting to start the LTX 2.5 model download.")
     elif downloader_status in {"downloading", "retrying", "verifying"}:
         status = downloader_status
         message = str(downloader_message or "Downloading required LTX 2.5 files.")
