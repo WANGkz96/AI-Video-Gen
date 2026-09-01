@@ -30,8 +30,17 @@ ensure_apt_packages() {
   if ! command -v apt-get >/dev/null 2>&1; then
     return 0
   fi
-  apt-get update
-  DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
+  if [ "$(id -u)" -eq 0 ]; then
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
+    return 0
+  fi
+  if ! sudo -n true >/dev/null 2>&1; then
+    echo "Installing system packages requires root or passwordless sudo." >&2
+    return 1
+  fi
+  sudo apt-get update
+  sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
 }
 
 ensure_nodejs() {

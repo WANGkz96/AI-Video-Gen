@@ -37,9 +37,18 @@ sync_repo() {
 
 if command -v apt-get >/dev/null 2>&1; then
   export DEBIAN_FRONTEND=noninteractive
-  apt-get update
-  apt-get install -y --no-install-recommends git ffmpeg libgl1 libglib2.0-0 libsndfile1
-  rm -rf /var/lib/apt/lists/*
+  if [ "$(id -u)" -eq 0 ]; then
+    apt-get update
+    apt-get install -y --no-install-recommends git ffmpeg libgl1 libglib2.0-0 libsndfile1
+    rm -rf /var/lib/apt/lists/*
+  elif sudo -n true >/dev/null 2>&1; then
+    sudo apt-get update
+    sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git ffmpeg libgl1 libglib2.0-0 libsndfile1
+    sudo rm -rf /var/lib/apt/lists/*
+  else
+    echo "ComfyUI provisioning requires root or passwordless sudo for system packages." >&2
+    exit 1
+  fi
 fi
 
 mkdir -p "${COMFY_ROOT}/custom_nodes" "${BLUEPRINT_DIR}"
