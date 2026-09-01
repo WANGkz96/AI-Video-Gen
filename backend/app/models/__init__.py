@@ -103,6 +103,8 @@ class DialogueSceneGeneration(BaseSchema):
     fps: float = 25.0
     prompt: str = ""
     imagePrompt: str = ""
+    avatarLayout: dict[str, str] = Field(default_factory=dict)
+    avatarIdentity: dict[str, str] = Field(default_factory=dict)
     image: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -301,6 +303,8 @@ class DialogueSceneGenerationRequest(BaseSchema):
     durationSec: float = 8.0
     outputPath: Path
     timeline: dict[str, Any] = Field(default_factory=dict)
+    avatarLayout: dict[str, str] = Field(default_factory=dict)
+    avatarIdentity: dict[str, str] = Field(default_factory=dict)
     backendParams: dict[str, Any] = Field(default_factory=dict)
 
 

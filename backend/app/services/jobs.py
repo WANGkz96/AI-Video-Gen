@@ -1531,6 +1531,8 @@ class JobService:
             durationSec=scene.timeline.durationSec,
             outputPath=output_path,
             timeline=scene.timeline.model_dump(mode="json"),
+            avatarLayout=scene.generation.avatarLayout,
+            avatarIdentity=scene.generation.avatarIdentity,
             backendParams={
                 **backend_params,
                 "resolution": "480p",

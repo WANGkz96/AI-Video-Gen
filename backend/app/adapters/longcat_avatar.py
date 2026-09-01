@@ -196,6 +196,8 @@ class LongCatAvatarAdapter(BaseGeneratorAdapter):
             "person1": request.speaker1Path,
             "person2": request.speaker2Path,
         }
+        avatar_layout = self._normalize_avatar_layout(request.avatarLayout)
+        avatar_identity = self._normalize_avatar_identity(request.avatarIdentity)
         substituted_silent_tracks: list[str] = []
         for person, source_path in tuple(speaker_paths.items()):
             if not self._pcm_wav_is_fully_silent(source_path):
@@ -209,6 +211,12 @@ class LongCatAvatarAdapter(BaseGeneratorAdapter):
             item
             for item in [
                 request.prompt.strip(),
+                (
+                    "Character identity lock: "
+                    f"person1 is {avatar_identity['person1']}; "
+                    f"person2 is {avatar_identity['person2']}. "
+                    "Preserve their species, appearance and identities; never exchange their identities, animal species or audio roles."
+                ),
                 "Preserve the exact two people, location and framing from the conditioning image.",
                 "Natural multi-person lip sync: each mouth moves only for its own audio track.",
                 "Use restrained physically coherent conversational gestures and reactions.",
@@ -228,6 +236,8 @@ class LongCatAvatarAdapter(BaseGeneratorAdapter):
                 "person2": speaker_paths["person2"].as_posix(),
             },
             "audio_type": "para",
+            "avatar_layout": avatar_layout,
+            "avatar_identity": avatar_identity,
             "target_orientation": "portrait" if request.height > request.width else "landscape",
         }
         input_path = run_dir / "avatar_input.json"
@@ -239,6 +249,30 @@ class LongCatAvatarAdapter(BaseGeneratorAdapter):
             "inputPath": input_path,
             "numSegments": num_segments,
             "substitutedSilentTracks": substituted_silent_tracks,
+        }
+
+    @staticmethod
+    def _normalize_avatar_layout(raw_layout: object) -> dict[str, str]:
+        """Validate the generic audio-to-frame layout contract for one scene."""
+        default_layout = {"person1": "left", "person2": "right"}
+        if not isinstance(raw_layout, dict) or not raw_layout:
+            return default_layout
+        person1 = str(raw_layout.get("person1", "")).strip().lower()
+        person2 = str(raw_layout.get("person2", "")).strip().lower()
+        if {person1, person2} != {"left", "right"}:
+            raise ValueError(
+                "LongCat avatar_layout must assign person1 and person2 to opposite left/right sides."
+            )
+        return {"person1": person1, "person2": person2}
+
+    @staticmethod
+    def _normalize_avatar_identity(raw_identity: object) -> dict[str, str]:
+        default_identity = {"person1": "first character", "person2": "second character"}
+        if not isinstance(raw_identity, dict):
+            return default_identity
+        return {
+            "person1": str(raw_identity.get("person1") or default_identity["person1"]).strip(),
+            "person2": str(raw_identity.get("person2") or default_identity["person2"]).strip(),
         }
 
     @staticmethod

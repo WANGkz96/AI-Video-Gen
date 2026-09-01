@@ -267,24 +267,33 @@ def _window_audio_embeddings(
 def _target_masks(image: PIL.Image.Image, input_data: dict[str, Any], device: int) -> torch.Tensor:
     src_width, src_height = image.size
     bbox = input_data.get("bbox", {})
-    left_bbox = bbox.get("person1")
-    right_bbox = bbox.get("person2")
-    if left_bbox is None and right_bbox is None:
+    person1_bbox = bbox.get("person1")
+    person2_bbox = bbox.get("person2")
+    if person1_bbox is None and person2_bbox is None:
+        avatar_layout = input_data.get("avatar_layout", {})
+        person1_side = str(avatar_layout.get("person1", "left")).strip().lower()
+        person2_side = str(avatar_layout.get("person2", "right")).strip().lower()
+        if {person1_side, person2_side} != {"left", "right"}:
+            raise ValueError("avatar_layout must put person1 and person2 on opposite left/right sides")
         face_scale = 0.1
         left_y_min, left_y_max = int(src_height * face_scale), int(src_height * (1 - face_scale))
         right_y_min, right_y_max = left_y_min, left_y_max
         half_width = src_width // 2
         left_x_min, left_x_max = int(half_width * face_scale), int(half_width * (1 - face_scale))
         right_x_min, right_x_max = int(half_width * face_scale + half_width), int(half_width * (1 - face_scale) + half_width)
-    elif left_bbox is not None and right_bbox is not None:
-        left_y_min, left_x_min, left_y_max, left_x_max = left_bbox
-        right_y_min, right_x_min, right_y_max, right_x_max = right_bbox
+        left_bbox = [left_y_min, left_x_min, left_y_max, left_x_max]
+        right_bbox = [right_y_min, right_x_min, right_y_max, right_x_max]
+        person1_bbox, person2_bbox = (left_bbox, right_bbox) if person1_side == "left" else (right_bbox, left_bbox)
+    elif person1_bbox is not None and person2_bbox is not None:
+        pass
     else:
         raise NotImplementedError("LongCat requires masks for both speakers or neither speaker")
     human_one = torch.zeros([src_height, src_width])
     human_two = torch.zeros([src_height, src_width])
-    human_one[left_y_min:left_y_max, left_x_min:left_x_max] = 1
-    human_two[right_y_min:right_y_max, right_x_min:right_x_max] = 1
+    person1_y_min, person1_x_min, person1_y_max, person1_x_max = person1_bbox
+    person2_y_min, person2_x_min, person2_y_max, person2_x_max = person2_bbox
+    human_one[person1_y_min:person1_y_max, person1_x_min:person1_x_max] = 1
+    human_two[person2_y_min:person2_y_max, person2_x_min:person2_x_max] = 1
     background = torch.where(human_one + human_two > 0, torch.tensor(0), torch.tensor(1))
     return torch.stack([human_one, human_two, background], dim=0).to(device)
 

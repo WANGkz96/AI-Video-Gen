@@ -168,6 +168,11 @@ def test_longcat_prepare_scene_preserves_per_scene_outputs_for_batching(tmp_path
         imagePath=tmp_path / "scene.png",
         speaker1Path=source_audio,
         speaker2Path=source_audio,
+        avatarLayout={"person1": "right", "person2": "left"},
+        avatarIdentity={
+            "person1": "First character is an anthropomorphic raccoon.",
+            "person2": "Second character is an anthropomorphic cat.",
+        },
         durationSec=8.0,
         outputPath=request_dir / "scene.mp4",
     )
@@ -178,6 +183,17 @@ def test_longcat_prepare_scene_preserves_per_scene_outputs_for_batching(tmp_path
     assert prepared["numSegments"] == 3
     assert Path(prepared["generatedDir"]).parent == request_dir / "longcat-runtime"
     assert input_doc["cond_audio"]["person1"] == source_audio.as_posix()
+    assert input_doc["avatar_layout"] == {"person1": "right", "person2": "left"}
+    assert input_doc["avatar_identity"]["person2"].endswith("cat.")
+    assert "never exchange their identities, animal species or audio roles" in input_doc["prompt"]
+
+
+def test_longcat_batch_runner_honors_the_per_scene_avatar_layout_contract() -> None:
+    root = Path(__file__).resolve().parents[1]
+    runner = (root / "scripts" / "run_longcat_avatar_batch.py").read_text(encoding="utf-8")
+
+    assert 'avatar_layout = input_data.get("avatar_layout", {})' in runner
+    assert "person1_bbox, person2_bbox = (left_bbox, right_bbox) if person1_side == \"left\" else (right_bbox, left_bbox)" in runner
 
 
 def test_comfy_release_unloads_ltx_models(monkeypatch) -> None:
