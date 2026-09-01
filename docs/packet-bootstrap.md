@@ -19,7 +19,9 @@ single-backend batch starts its model download immediately.  A mixed LongCat +
 LTX batch is intentionally serialized: LongCat downloads and renders first;
 after its results are written, the worker removes its weights and opens the LTX
 download gate.  The two large model packs therefore never compete for the
-same ephemeral disk.
+same ephemeral disk.  If LongCat provisioning itself fails, its partial model
+directory is released and LTX is still allowed to finish its independent
+branch instead of being blocked by the failed first branch.
 
 Model downloads within the active branch use at most three workers.  Override
 the lower value with `AI_VIDEO_GEN_MODEL_DOWNLOAD_CONCURRENCY=1` or `2`; values

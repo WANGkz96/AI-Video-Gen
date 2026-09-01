@@ -99,6 +99,7 @@ if [ "${AI_VIDEO_GEN_ENABLE_LTX}" = "1" ] && [ "${AI_VIDEO_GEN_ENABLE_LONGCAT}" 
     --longcat-status-file "${LONGCAT_STATUS_FILE}" \
     --ltx-status-file "${STATUS_FILE}" \
     --release-file "${LONGCAT_RELEASE_FILE}" \
+    --longcat-weights-dir "${LONGCAT_REPO_DIR:-/workspace/LongCat-Video}/weights" \
     --poll-sec "${AI_VIDEO_GEN_PACKET_BRANCH_SEQUENCE_POLL_SEC:-2}" \
     -- \
     "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/scripts/download_comfy_ltx25_models.py" \

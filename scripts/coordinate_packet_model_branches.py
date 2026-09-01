@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -65,6 +66,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--longcat-status-file", required=True)
     parser.add_argument("--ltx-status-file", required=True)
     parser.add_argument("--release-file", required=True)
+    parser.add_argument(
+        "--longcat-weights-dir",
+        required=True,
+        help="Exact LongCat weights directory that may be removed after a failed first branch.",
+    )
     parser.add_argument("--poll-sec", type=float, default=2.0)
     parser.add_argument(
         "download_command",
@@ -79,11 +85,27 @@ def _parse_args() -> argparse.Namespace:
     return args
 
 
+def _release_failed_longcat_weights(path: Path) -> None:
+    """Remove only the known model payload after LongCat provisioning failed."""
+
+    if path.name != "weights":
+        raise ValueError(f"Refusing to remove unexpected LongCat weights path: {path}")
+    if path.exists():
+        shutil.rmtree(path)
+
+
+def _start_ltx_download(args: argparse.Namespace, status_file: Path, message: str) -> int:
+    _write_ltx_status(status_file, status="starting", message=message)
+    print("Packet model sequence: starting LTX downloader.", flush=True)
+    return subprocess.run(args.download_command, check=False).returncode
+
+
 def main() -> int:
     args = _parse_args()
     longcat_status_file = Path(args.longcat_status_file).expanduser().resolve()
     ltx_status_file = Path(args.ltx_status_file).expanduser().resolve()
     release_file = Path(args.release_file).expanduser().resolve()
+    longcat_weights_dir = Path(args.longcat_weights_dir).expanduser().resolve()
     poll_sec = max(0.25, float(args.poll_sec))
 
     _write_ltx_status(
@@ -99,23 +121,30 @@ def main() -> int:
         error = longcat_status.get("error")
         if state in {"error", "failed"} or error:
             detail = str(error or longcat_status.get("message") or "LongCat provisioning failed.")
-            _write_ltx_status(
+            try:
+                _release_failed_longcat_weights(longcat_weights_dir)
+            except Exception as exc:
+                cleanup_error = f"LongCat provisioning failed ({detail}); unable to release its weights: {exc}"
+                _write_ltx_status(
+                    ltx_status_file,
+                    status="error",
+                    message="LTX download was not started because LongCat cleanup failed.",
+                    error=cleanup_error,
+                )
+                print(f"Packet model sequence aborted: {cleanup_error}", file=sys.stderr, flush=True)
+                return 1
+            return _start_ltx_download(
+                args,
                 ltx_status_file,
-                status="error",
-                message="LTX download was not started because the preceding LongCat branch failed.",
-                error=detail,
+                "LongCat provisioning failed and its partial weights were released; starting LTX 2.5 download.",
             )
-            print(f"Packet model sequence aborted: {detail}", file=sys.stderr, flush=True)
-            return 1
         time.sleep(poll_sec)
 
-    _write_ltx_status(
+    return _start_ltx_download(
+        args,
         ltx_status_file,
-        status="starting",
-        message="LongCat weights were released; starting LTX 2.5 model download.",
+        "LongCat weights were released; starting LTX 2.5 model download.",
     )
-    print("Packet model sequence: LongCat released; starting LTX downloader.", flush=True)
-    return subprocess.run(args.download_command, check=False).returncode
 
 
 if __name__ == "__main__":

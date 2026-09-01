@@ -98,6 +98,7 @@ def test_coordinator_starts_ltx_only_after_release_signal(tmp_path: Path, monkey
     longcat_status = tmp_path / "longcat-status.json"
     ltx_status = tmp_path / "ltx-status.json"
     release_file = tmp_path / "longcat-released.json"
+    longcat_weights = tmp_path / "LongCat-Video" / "weights"
     marker = tmp_path / "ltx-started.txt"
 
     longcat_status.write_text(json.dumps({"status": "ready"}), encoding="utf-8")
@@ -113,6 +114,8 @@ def test_coordinator_starts_ltx_only_after_release_signal(tmp_path: Path, monkey
             ltx_status.as_posix(),
             "--release-file",
             release_file.as_posix(),
+            "--longcat-weights-dir",
+            longcat_weights.as_posix(),
             "--",
             sys.executable,
             "-c",
@@ -125,11 +128,15 @@ def test_coordinator_starts_ltx_only_after_release_signal(tmp_path: Path, monkey
     assert json.loads(ltx_status.read_text(encoding="utf-8"))["status"] == "starting"
 
 
-def test_coordinator_reports_preceding_longcat_failure(tmp_path: Path, monkeypatch) -> None:
+def test_coordinator_releases_failed_longcat_weights_then_starts_ltx(tmp_path: Path, monkeypatch) -> None:
     coordinator = _load_coordinator_module()
     longcat_status = tmp_path / "longcat-status.json"
     ltx_status = tmp_path / "ltx-status.json"
     release_file = tmp_path / "longcat-released.json"
+    longcat_weights = tmp_path / "LongCat-Video" / "weights"
+    marker = tmp_path / "ltx-started.txt"
+    longcat_weights.mkdir(parents=True)
+    (longcat_weights / "partial.safetensors.tmp").write_text("partial", encoding="utf-8")
 
     longcat_status.write_text(
         json.dumps({"status": "error", "error": "checkpoint download failed"}),
@@ -146,19 +153,22 @@ def test_coordinator_reports_preceding_longcat_failure(tmp_path: Path, monkeypat
             ltx_status.as_posix(),
             "--release-file",
             release_file.as_posix(),
+            "--longcat-weights-dir",
+            longcat_weights.as_posix(),
             "--poll-sec",
             "0.01",
             "--",
             sys.executable,
             "-c",
-            "raise SystemExit(0)",
+            f"from pathlib import Path; Path({marker.as_posix()!r}).write_text('started')",
         ],
     )
 
-    assert coordinator.main() == 1
+    assert coordinator.main() == 0
     status = json.loads(ltx_status.read_text(encoding="utf-8"))
-    assert status["status"] == "error"
-    assert status["error"] == "checkpoint download failed"
+    assert status["status"] == "starting"
+    assert marker.read_text(encoding="utf-8") == "started"
+    assert not longcat_weights.exists()
 
 
 def test_provisioning_keeps_ltx_unavailable_while_sequence_gate_is_closed(tmp_path: Path, monkeypatch) -> None:
