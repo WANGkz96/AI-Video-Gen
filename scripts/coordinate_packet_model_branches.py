@@ -73,6 +73,11 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--poll-sec", type=float, default=2.0)
     parser.add_argument(
+        "--preserve-longcat-weights",
+        action="store_true",
+        help="Keep LongCat weights after a failed provision when they live in durable model storage.",
+    )
+    parser.add_argument(
         "download_command",
         nargs=argparse.REMAINDER,
         help="Command for the normal LTX downloader, placed after --.",
@@ -121,22 +126,28 @@ def main() -> int:
         error = longcat_status.get("error")
         if state in {"error", "failed"} or error:
             detail = str(error or longcat_status.get("message") or "LongCat provisioning failed.")
-            try:
-                _release_failed_longcat_weights(longcat_weights_dir)
-            except Exception as exc:
-                cleanup_error = f"LongCat provisioning failed ({detail}); unable to release its weights: {exc}"
-                _write_ltx_status(
-                    ltx_status_file,
-                    status="error",
-                    message="LTX download was not started because LongCat cleanup failed.",
-                    error=cleanup_error,
-                )
-                print(f"Packet model sequence aborted: {cleanup_error}", file=sys.stderr, flush=True)
-                return 1
+            if not args.preserve_longcat_weights:
+                try:
+                    _release_failed_longcat_weights(longcat_weights_dir)
+                except Exception as exc:
+                    cleanup_error = f"LongCat provisioning failed ({detail}); unable to release its weights: {exc}"
+                    _write_ltx_status(
+                        ltx_status_file,
+                        status="error",
+                        message="LTX download was not started because LongCat cleanup failed.",
+                        error=cleanup_error,
+                    )
+                    print(f"Packet model sequence aborted: {cleanup_error}", file=sys.stderr, flush=True)
+                    return 1
             return _start_ltx_download(
                 args,
                 ltx_status_file,
-                "LongCat provisioning failed and its partial weights were released; starting LTX 2.5 download.",
+                (
+                    "LongCat provisioning failed; its durable model cache was retained for resume. "
+                    "Starting LTX 2.5 download."
+                    if args.preserve_longcat_weights
+                    else "LongCat provisioning failed and its partial weights were released; starting LTX 2.5 download."
+                ),
             )
         time.sleep(poll_sec)
 

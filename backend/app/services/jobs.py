@@ -696,13 +696,18 @@ class JobService:
                 and ComfyUiWorkflowAdapter.key in pending_backends
                 and self._settings.release_longcat_weights_after_branch
             ):
-                released_path = await asyncio.to_thread(self._release_longcat_weights)
+                released_path, was_released = await asyncio.to_thread(self._release_longcat_weights)
                 release_signal = await asyncio.to_thread(self._signal_longcat_branch_release)
+                cache_action = (
+                    f"Released LongCat weights at {released_path}"
+                    if was_released
+                    else f"Retained persistent LongCat model cache at {released_path}"
+                )
                 await self._log(
                     runtime,
                     "info",
                     (
-                        f"Released LongCat weights at {released_path} before the pending LTX branch."
+                        f"{cache_action} before the pending LTX branch."
                         + (
                             f" Opened the LTX download gate at {release_signal}."
                             if release_signal
@@ -760,7 +765,7 @@ class JobService:
                 process_dialogue_scenes=process_dialogue_scenes,
             )
 
-    def _release_longcat_weights(self) -> Path:
+    def _release_longcat_weights(self) -> tuple[Path, bool]:
         """Free the ephemeral-model payload once this job no longer needs Avatar.
 
         The Packet worker has a single job consumer, so at this point no other
@@ -768,15 +773,21 @@ class JobService:
         directory (the base LongCat assets and Avatar delta) makes room for the
         LTX 2.5 model pack on Packet's 150 GB ephemeral disk.
         """
-        weights_dir = (self._settings.longcat_repo_dir / "weights").resolve()
         checkpoint_dir = self._settings.longcat_checkpoint_dir.resolve()
+        persistent_cache_dir = self._settings.persistent_model_cache_dir
+        if persistent_cache_dir and checkpoint_dir.is_relative_to(persistent_cache_dir):
+            # The durable cache is deliberately shared between Packet
+            # instances.  Opening the LTX branch must never delete it.
+            return checkpoint_dir.parent, False
+
+        weights_dir = (self._settings.longcat_repo_dir / "weights").resolve()
         if weights_dir not in checkpoint_dir.parents:
             raise RuntimeError(
                 "Refusing to release LongCat weights: checkpoint directory is outside the LongCat weights root."
             )
         if weights_dir.exists():
             shutil.rmtree(weights_dir)
-        return weights_dir
+        return weights_dir, True
 
     def _signal_longcat_branch_release(self) -> Path | None:
         """Tell an optional Packet bootstrap coordinator that LTX may start.

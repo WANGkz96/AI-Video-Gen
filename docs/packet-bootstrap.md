@@ -43,6 +43,23 @@ The adapter rewrites the official workflow's BF16 default names to those exact
 local model files before submitting a ComfyUI prompt.  This is required: the
 BF16 defaults are intentionally not downloaded on the 150 GB profile.
 
+## Persistent model cache
+
+Set `AI_VIDEO_GEN_PERSISTENT_MODEL_CACHE_DIR` to the mount path of a durable
+Packet volume (for example `/data/share123/ai-video-gen-model-cache`). The
+bootstrap keeps application code and runtimes on the instance, but downloads
+the LTX and LongCat model payloads into that directory. ComfyUI is given that
+directory as an extra model search path and LongCat loads its checkpoint from
+there directly, so a later instance reuses verified files instead of fetching
+them again.
+
+The cache is intentionally optional: an empty value keeps the original
+ephemeral-only behaviour. A durable cache is never removed when the LongCat
+branch opens the LTX branch. On the 100 GB Packet volume, the exact INT8 LTX
+pack and the trimmed LongCat Avatar payload fit together; the Avatar download
+keeps only the `safetensors` Whisper weights used by Transformers and omits
+redundant TensorFlow, Flax, and PyTorch checkpoint formats.
+
 `HF_TOKEN` must have accepted access to the gated `Lightricks/LTX-2.5` model.
 If it has not, the LTX branch remains unavailable with a readable provisioning
 error; Avatar jobs do not depend on that acceptance.

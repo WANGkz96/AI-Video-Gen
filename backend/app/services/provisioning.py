@@ -61,7 +61,7 @@ def _utc_now() -> str:
 
 
 def _target_path(settings: Settings, model: dict[str, str]) -> Path:
-    return settings.comfyui_root / model["targetSubdir"] / model["targetFilename"]
+    return settings.ltx_model_root / model["targetSubdir"] / model["targetFilename"]
 
 
 def list_comfy_ltx25_model_files(settings: Settings) -> list[dict[str, Any]]:
@@ -111,9 +111,10 @@ def _read_status_file(path: Path) -> dict[str, Any] | None:
 
 
 def _check_longcat(settings: Settings) -> dict[str, Any]:
+    longcat_runtime_weights_dir = settings.longcat_checkpoint_dir.parent / "LongCat-Video"
     required_files = [
         settings.longcat_repo_dir / "run_demo_avatar_multi_audio_to_video.py",
-        settings.longcat_repo_dir / "weights" / "LongCat-Video" / "tokenizer" / "tokenizer_config.json",
+        longcat_runtime_weights_dir / "tokenizer" / "tokenizer_config.json",
         settings.longcat_checkpoint_dir / "base_model_int8" / "quantized_model.safetensors.index.json",
         settings.longcat_checkpoint_dir / "lora" / "dmd_lora.safetensors",
         settings.longcat_checkpoint_dir / "whisper-large-v3" / "config.json",

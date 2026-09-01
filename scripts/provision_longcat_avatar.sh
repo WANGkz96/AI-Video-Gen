@@ -6,6 +6,7 @@ LONGCAT_REPO_DIR="${LONGCAT_REPO_DIR:-/workspace/LongCat-Video}"
 LONGCAT_REPO_URL="${LONGCAT_REPO_URL:-https://github.com/meituan-longcat/LongCat-Video.git}"
 LONGCAT_REPO_REF="${LONGCAT_REPO_REF:-6b3f4b8582a8bc3f20f795735f5383716c4ba794}"
 LONGCAT_CONDA_ENV_DIR="${LONGCAT_CONDA_ENV_DIR:-/opt/conda/envs/longcat-video}"
+LONGCAT_MODEL_ROOT="${LONGCAT_MODEL_ROOT:-${LONGCAT_REPO_DIR}/weights}"
 LONGCAT_PROVISIONING_STATUS="${LONGCAT_PROVISIONING_STATUS:-${ROOT_DIR}/data/longcat-provisioning-status.json}"
 CONDA_BIN="${LONGCAT_CONDA_BIN:-/opt/conda/bin/conda}"
 MODEL_DOWNLOAD_CONCURRENCY="${AI_VIDEO_GEN_MODEL_DOWNLOAD_CONCURRENCY:-3}"
@@ -124,15 +125,30 @@ if [ -n "${HF_TOKEN:-}" ]; then
   HF_ARGS+=(--token "${HF_TOKEN}")
 fi
 "${HF_BIN}" download meituan-longcat/LongCat-Video \
-  --local-dir "${LONGCAT_REPO_DIR}/weights/LongCat-Video" \
+  --local-dir "${LONGCAT_MODEL_ROOT}/LongCat-Video" \
   --max-workers "${MODEL_DOWNLOAD_CONCURRENCY}" \
   --include "tokenizer/**" "text_encoder/**" "vae/**" \
   "${HF_ARGS[@]}"
 write_status "downloading" "58" "LongCat runtime weights ready; downloading Avatar 1.5 INT8 components."
 "${HF_BIN}" download meituan-longcat/LongCat-Video-Avatar-1.5 \
-  --local-dir "${LONGCAT_REPO_DIR}/weights/LongCat-Video-Avatar-1.5" \
+  --local-dir "${LONGCAT_MODEL_ROOT}/LongCat-Video-Avatar-1.5" \
   --max-workers "${MODEL_DOWNLOAD_CONCURRENCY}" \
-  --include "base_model_int8/**" "lora/**" "whisper-large-v3/**" "vocal_separator/**" "scheduler/**" \
+  --include \
+  "base_model_int8/**" \
+  "lora/dmd_lora.safetensors" \
+  "whisper-large-v3/added_tokens.json" \
+  "whisper-large-v3/config.json" \
+  "whisper-large-v3/generation_config.json" \
+  "whisper-large-v3/merges.txt" \
+  "whisper-large-v3/model.safetensors" \
+  "whisper-large-v3/normalizer.json" \
+  "whisper-large-v3/preprocessor_config.json" \
+  "whisper-large-v3/special_tokens_map.json" \
+  "whisper-large-v3/tokenizer.json" \
+  "whisper-large-v3/tokenizer_config.json" \
+  "whisper-large-v3/vocab.json" \
+  "vocal_separator/Kim_Vocal_2.onnx" \
+  "scheduler/**" \
   "${HF_ARGS[@]}"
 
 write_status "ready" "100" "LongCat Video Avatar 1.5 is ready."

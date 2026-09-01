@@ -119,6 +119,8 @@ class Settings:
     enable_ltx: bool
     enable_longcat: bool
     release_longcat_weights_after_branch: bool
+    persistent_model_cache_dir: Path | None
+    ltx_model_root: Path
     longcat_branch_release_file: Path | None
     backend_ready_poll_sec: float
     backend_ready_timeout_sec: float
@@ -150,6 +152,15 @@ class Settings:
         )
 
         comfyui_root = Path(os.getenv("COMFYUI_ROOT", "/workspace/ComfyUI")).resolve()
+        persistent_model_cache_raw = (os.getenv("AI_VIDEO_GEN_PERSISTENT_MODEL_CACHE_DIR") or "").strip()
+        persistent_model_cache_dir = (
+            Path(persistent_model_cache_raw).expanduser().resolve()
+            if persistent_model_cache_raw
+            else None
+        )
+        ltx_model_root = Path(
+            os.getenv("AI_VIDEO_GEN_LTX_MODEL_ROOT", comfyui_root.as_posix())
+        ).expanduser().resolve()
         auth_required = _parse_bool(os.getenv("AI_VIDEO_GEN_AUTH_REQUIRED"), False)
         api_token = (os.getenv("AI_VIDEO_GEN_API_TOKEN") or "").strip() or None
         if auth_required and not api_token:
@@ -213,6 +224,8 @@ class Settings:
                 os.getenv("AI_VIDEO_GEN_RELEASE_LONGCAT_WEIGHTS_AFTER_BRANCH"),
                 False,
             ),
+            persistent_model_cache_dir=persistent_model_cache_dir,
+            ltx_model_root=ltx_model_root,
             longcat_branch_release_file=longcat_branch_release_file,
             backend_ready_poll_sec=max(
                 0.25,

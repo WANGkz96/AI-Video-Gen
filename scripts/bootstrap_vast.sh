@@ -121,6 +121,8 @@ write_runtime_env() {
   write_env_value "AI_VIDEO_GEN_ENABLE_LTX" "${AI_VIDEO_GEN_ENABLE_LTX:-1}"
   write_env_value "AI_VIDEO_GEN_ENABLE_LONGCAT" "${AI_VIDEO_GEN_ENABLE_LONGCAT:-0}"
   write_env_value "AI_VIDEO_GEN_RELEASE_LONGCAT_WEIGHTS_AFTER_BRANCH" "${AI_VIDEO_GEN_RELEASE_LONGCAT_WEIGHTS_AFTER_BRANCH:-0}"
+  write_env_value "AI_VIDEO_GEN_PERSISTENT_MODEL_CACHE_DIR" "${AI_VIDEO_GEN_PERSISTENT_MODEL_CACHE_DIR:-}"
+  write_env_value "AI_VIDEO_GEN_LTX_MODEL_ROOT" "${AI_VIDEO_GEN_LTX_MODEL_ROOT:-${COMFYUI_ROOT:-/workspace/ComfyUI}}"
   if [ -n "${AI_VIDEO_GEN_LONGCAT_BRANCH_RELEASE_FILE:-}" ]; then
     write_env_value "AI_VIDEO_GEN_LONGCAT_BRANCH_RELEASE_FILE" "${AI_VIDEO_GEN_LONGCAT_BRANCH_RELEASE_FILE}"
   fi
@@ -128,6 +130,7 @@ write_runtime_env() {
   write_env_value "AI_VIDEO_GEN_BACKEND_READY_POLL_SEC" "${AI_VIDEO_GEN_BACKEND_READY_POLL_SEC:-5}"
   write_env_value "AI_VIDEO_GEN_BACKEND_READY_TIMEOUT_SEC" "${AI_VIDEO_GEN_BACKEND_READY_TIMEOUT_SEC:-5400}"
   write_env_value "LONGCAT_REPO_DIR" "${LONGCAT_REPO_DIR:-/workspace/LongCat-Video}"
+  write_env_value "LONGCAT_MODEL_ROOT" "${LONGCAT_MODEL_ROOT:-${LONGCAT_REPO_DIR:-/workspace/LongCat-Video}/weights}"
   write_env_value "LONGCAT_AVATAR_CHECKPOINT_DIR" "${LONGCAT_AVATAR_CHECKPOINT_DIR:-/workspace/LongCat-Video/weights/LongCat-Video-Avatar-1.5}"
   write_env_value "LONGCAT_CONDA_ENV_DIR" "${LONGCAT_CONDA_ENV_DIR:-/opt/conda/envs/longcat-video}"
   write_env_value "LONGCAT_PROVISIONING_STATUS" "${LONGCAT_PROVISIONING_STATUS:-${ROOT_DIR}/data/longcat-provisioning-status.json}"

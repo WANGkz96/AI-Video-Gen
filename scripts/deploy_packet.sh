@@ -15,6 +15,23 @@ STATUS_FILE="${AI_VIDEO_GEN_PROVISIONING_STATUS:-${ROOT_DIR}/data/provisioning-s
 LONGCAT_STATUS_FILE="${LONGCAT_PROVISIONING_STATUS:-${ROOT_DIR}/data/longcat-provisioning-status.json}"
 LONGCAT_RELEASE_FILE="${AI_VIDEO_GEN_LONGCAT_BRANCH_RELEASE_FILE:-${ROOT_DIR}/.run/longcat-branch-released.json}"
 MODEL_DOWNLOAD_CONCURRENCY="${AI_VIDEO_GEN_MODEL_DOWNLOAD_CONCURRENCY:-3}"
+PERSISTENT_MODEL_CACHE_DIR="${AI_VIDEO_GEN_PERSISTENT_MODEL_CACHE_DIR:-}"
+
+# The persistent cache is optional.  Without it all paths retain the original
+# Packet-only layout, so temporary or legacy instances keep working unchanged.
+if [ -n "${PERSISTENT_MODEL_CACHE_DIR}" ]; then
+  PERSISTENT_MODEL_CACHE_DIR="$(realpath -m "${PERSISTENT_MODEL_CACHE_DIR}")"
+  mkdir -p "${PERSISTENT_MODEL_CACHE_DIR}"
+  LTX_MODEL_ROOT="${PERSISTENT_MODEL_CACHE_DIR}/ltx25"
+  LONGCAT_MODEL_ROOT="${PERSISTENT_MODEL_CACHE_DIR}/longcat"
+  LONGCAT_AVATAR_CHECKPOINT_DIR="${LONGCAT_MODEL_ROOT}/LongCat-Video-Avatar-1.5"
+  LONGCAT_COORDINATOR_ARGS=(--preserve-longcat-weights)
+else
+  LTX_MODEL_ROOT="${COMFY_ROOT}"
+  LONGCAT_MODEL_ROOT="${LONGCAT_REPO_DIR:-/workspace/LongCat-Video}/weights"
+  LONGCAT_AVATAR_CHECKPOINT_DIR="${LONGCAT_MODEL_ROOT}/LongCat-Video-Avatar-1.5"
+  LONGCAT_COORDINATOR_ARGS=()
+fi
 
 if ! [[ "${MODEL_DOWNLOAD_CONCURRENCY}" =~ ^[1-9][0-9]*$ ]]; then
   MODEL_DOWNLOAD_CONCURRENCY=3
@@ -45,10 +62,14 @@ COMFYUI_I2V_WORKFLOW="${COMFY_ROOT}/blueprints/LTX-2.5_T2V_I2V_Single_Stage_Dist
 AI_VIDEO_GEN_ENABLE_LTX="${AI_VIDEO_GEN_ENABLE_LTX}" \
 AI_VIDEO_GEN_ENABLE_LONGCAT="${AI_VIDEO_GEN_ENABLE_LONGCAT}" \
 AI_VIDEO_GEN_RELEASE_LONGCAT_WEIGHTS_AFTER_BRANCH="${AI_VIDEO_GEN_RELEASE_LONGCAT_WEIGHTS_AFTER_BRANCH}" \
+AI_VIDEO_GEN_PERSISTENT_MODEL_CACHE_DIR="${PERSISTENT_MODEL_CACHE_DIR}" \
+AI_VIDEO_GEN_LTX_MODEL_ROOT="${LTX_MODEL_ROOT}" \
 AI_VIDEO_GEN_LONGCAT_BRANCH_RELEASE_FILE="${LONGCAT_RELEASE_FILE}" \
 AI_VIDEO_GEN_MODEL_DOWNLOAD_CONCURRENCY="${MODEL_DOWNLOAD_CONCURRENCY}" \
 AI_VIDEO_GEN_PROVISIONING_STATUS="${STATUS_FILE}" \
 LONGCAT_PROVISIONING_STATUS="${LONGCAT_STATUS_FILE}" \
+LONGCAT_MODEL_ROOT="${LONGCAT_MODEL_ROOT}" \
+LONGCAT_AVATAR_CHECKPOINT_DIR="${LONGCAT_AVATAR_CHECKPOINT_DIR}" \
 LONGCAT_CONDA_ENV_DIR="${LONGCAT_CONDA_ENV_DIR:-/workspace/.venvs/longcat-video}" \
 bash "${ROOT_DIR}/scripts/bootstrap_vast.sh"
 
@@ -57,6 +78,7 @@ bash "${ROOT_DIR}/scripts/bootstrap_vast.sh"
 # the venv is exactly where its runtime dependencies belong.
 if [ "${AI_VIDEO_GEN_ENABLE_LTX}" = "1" ]; then
   COMFYUI_ROOT="${COMFY_ROOT}" \
+  AI_VIDEO_GEN_LTX_MODEL_ROOT="${LTX_MODEL_ROOT}" \
   COMFYUI_PORT="18188" \
   COMFY_PYTHON="${COMFY_PYTHON:-${ROOT_DIR}/.venv/bin/python}" \
   bash "${ROOT_DIR}/scripts/provision_packet_comfyui.sh"
@@ -70,7 +92,7 @@ rm -f "${LONGCAT_RELEASE_FILE}"
 start_ltx_download() {
   nohup env HF_TOKEN="${HF_TOKEN:-}" HUGGING_FACE_HUB_TOKEN="${HUGGING_FACE_HUB_TOKEN:-}" \
     "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/scripts/download_comfy_ltx25_models.py" \
-    --comfy-root "${COMFY_ROOT}" \
+    --comfy-root "${LTX_MODEL_ROOT}" \
     --status-file "${STATUS_FILE}" \
     --max-workers "${MODEL_DOWNLOAD_CONCURRENCY}" \
     --max-attempts "${AI_VIDEO_GEN_MODEL_DOWNLOAD_MAX_ATTEMPTS:-60}" \
@@ -83,7 +105,8 @@ start_ltx_download() {
 if [ "${AI_VIDEO_GEN_ENABLE_LONGCAT}" = "1" ]; then
   nohup env HF_TOKEN="${HF_TOKEN:-}" \
     LONGCAT_REPO_DIR="${LONGCAT_REPO_DIR:-/workspace/LongCat-Video}" \
-    LONGCAT_AVATAR_CHECKPOINT_DIR="${LONGCAT_AVATAR_CHECKPOINT_DIR:-/workspace/LongCat-Video/weights/LongCat-Video-Avatar-1.5}" \
+    LONGCAT_MODEL_ROOT="${LONGCAT_MODEL_ROOT}" \
+    LONGCAT_AVATAR_CHECKPOINT_DIR="${LONGCAT_AVATAR_CHECKPOINT_DIR}" \
     LONGCAT_CONDA_ENV_DIR="${LONGCAT_CONDA_ENV_DIR:-/workspace/.venvs/longcat-video}" \
     LONGCAT_PROVISIONING_STATUS="${LONGCAT_STATUS_FILE}" \
     AI_VIDEO_GEN_MODEL_DOWNLOAD_CONCURRENCY="${MODEL_DOWNLOAD_CONCURRENCY}" \
@@ -99,11 +122,12 @@ if [ "${AI_VIDEO_GEN_ENABLE_LTX}" = "1" ] && [ "${AI_VIDEO_GEN_ENABLE_LONGCAT}" 
     --longcat-status-file "${LONGCAT_STATUS_FILE}" \
     --ltx-status-file "${STATUS_FILE}" \
     --release-file "${LONGCAT_RELEASE_FILE}" \
-    --longcat-weights-dir "${LONGCAT_REPO_DIR:-/workspace/LongCat-Video}/weights" \
+    --longcat-weights-dir "${LONGCAT_MODEL_ROOT}" \
     --poll-sec "${AI_VIDEO_GEN_PACKET_BRANCH_SEQUENCE_POLL_SEC:-2}" \
+    "${LONGCAT_COORDINATOR_ARGS[@]}" \
     -- \
     "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/scripts/download_comfy_ltx25_models.py" \
-    --comfy-root "${COMFY_ROOT}" \
+    --comfy-root "${LTX_MODEL_ROOT}" \
     --status-file "${STATUS_FILE}" \
     --max-workers "${MODEL_DOWNLOAD_CONCURRENCY}" \
     --max-attempts "${AI_VIDEO_GEN_MODEL_DOWNLOAD_MAX_ATTEMPTS:-60}" \

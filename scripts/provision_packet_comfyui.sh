@@ -14,6 +14,7 @@ LTX_NODE_DIR="${COMFY_ROOT}/custom_nodes/ComfyUI-LTXVideo"
 CONVERTER_DIR="${COMFY_ROOT}/custom_nodes/comfyui-workflow-to-api-converter-endpoint"
 BLUEPRINT_DIR="${COMFY_ROOT}/blueprints"
 WORKFLOW_NAME="LTX-2.5_T2V_I2V_Single_Stage_Distilled.json"
+LTX_MODEL_ROOT="${AI_VIDEO_GEN_LTX_MODEL_ROOT:-${COMFY_ROOT}}"
 
 sync_repo() {
   local repo_url="$1"
@@ -57,12 +58,31 @@ sync_repo "https://github.com/SethRobinson/comfyui-workflow-to-api-converter-end
 
 install -m 0644 "${LTX_NODE_DIR}/example_workflows/2.5/${WORKFLOW_NAME}" "${BLUEPRINT_DIR}/${WORKFLOW_NAME}"
 
+# ComfyUI receives its model search roots at boot.  Point it at the durable
+# cache directly instead of copying large weights back to ephemeral storage.
+COMFY_MODEL_PATH_ARGS=()
+if [ "${LTX_MODEL_ROOT}" != "${COMFY_ROOT}" ]; then
+  mkdir -p "${LTX_MODEL_ROOT}/models/diffusion_models" \
+    "${LTX_MODEL_ROOT}/models/text_encoders" \
+    "${LTX_MODEL_ROOT}/models/vae"
+  EXTRA_MODEL_PATHS_FILE="${COMFY_ROOT}/extra_model_paths.ai-video-gen.yaml"
+  printf '%s\n' \
+    'ai_video_gen_persistent_ltx:' \
+    "  base_path: ${LTX_MODEL_ROOT}" \
+    '  diffusion_models: models/diffusion_models' \
+    '  text_encoders: models/text_encoders' \
+    '  vae: models/vae' \
+    > "${EXTRA_MODEL_PATHS_FILE}"
+  COMFY_MODEL_PATH_ARGS=(--extra-model-paths-config "${EXTRA_MODEL_PATHS_FILE}")
+fi
+
 mkdir -p "${COMFY_ROOT}/.run"
 pkill -f "${COMFY_ROOT}/main.py.*--port ${COMFY_PORT}" || true
 nohup "${COMFY_PYTHON}" "${COMFY_ROOT}/main.py" \
   --listen 127.0.0.1 \
   --port "${COMFY_PORT}" \
   --disable-auto-launch \
+  "${COMFY_MODEL_PATH_ARGS[@]}" \
   > "${COMFY_ROOT}/.run/comfyui.out.log" \
   2> "${COMFY_ROOT}/.run/comfyui.err.log" \
   < /dev/null &
