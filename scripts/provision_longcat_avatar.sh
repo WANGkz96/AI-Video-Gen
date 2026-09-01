@@ -129,15 +129,12 @@ grep -Ev '^(torch|torchvision|torchaudio|numpy|sympy|libsndfile1|tritonservercli
 "${PYTHON_BIN}" -m pip install flash-attn==2.7.4.post1 --no-build-isolation
 
 write_status "downloading" "20" "Downloading only LongCat files used by Avatar 1.5 INT8 + distilled runtime."
-HF_ARGS=()
-if [ -n "${HF_TOKEN:-}" ]; then
-  HF_ARGS+=(--token "${HF_TOKEN}")
-fi
+# The Hugging Face CLI reads HF_TOKEN from its environment.  Do not pass it as
+# a command-line argument: process listings would otherwise expose the token.
 "${HF_BIN}" download meituan-longcat/LongCat-Video \
   --local-dir "${LONGCAT_MODEL_ROOT}/LongCat-Video" \
   --max-workers "${MODEL_DOWNLOAD_CONCURRENCY}" \
-  --include "tokenizer/**" "text_encoder/**" "vae/**" \
-  "${HF_ARGS[@]}"
+  --include "tokenizer/**" "text_encoder/**" "vae/**"
 write_status "downloading" "58" "LongCat runtime weights ready; downloading Avatar 1.5 INT8 components."
 "${HF_BIN}" download meituan-longcat/LongCat-Video-Avatar-1.5 \
   --local-dir "${LONGCAT_MODEL_ROOT}/LongCat-Video-Avatar-1.5" \
@@ -157,8 +154,7 @@ write_status "downloading" "58" "LongCat runtime weights ready; downloading Avat
   "whisper-large-v3/tokenizer_config.json" \
   "whisper-large-v3/vocab.json" \
   "vocal_separator/Kim_Vocal_2.onnx" \
-  "scheduler/**" \
-  "${HF_ARGS[@]}"
+  "scheduler/**"
 
 write_status "ready" "100" "LongCat Video Avatar 1.5 is ready."
 trap - ERR
