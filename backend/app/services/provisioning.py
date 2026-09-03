@@ -121,21 +121,29 @@ def _check_longcat(settings: Settings) -> dict[str, Any]:
         settings.longcat_conda_env_dir / "bin" / "torchrun",
     ]
     missing = [item.as_posix() for item in required_files if not item.is_file()]
-    status_payload = _read_status_file(settings.longcat_provisioning_status_file) or {}
-    ready = not missing
+    status_payload = _read_status_file(settings.longcat_provisioning_status_file)
+    status = str((status_payload or {}).get("status") or "").strip().lower()
+    # A persistent model cache can make every checkpoint and ``torchrun``
+    # appear before the current instance has finished reconstructing its
+    # ephemeral Python environment.  Do not dispatch a LongCat job in that
+    # window: the provisioner writes ``ready`` only after all runtime imports
+    # (including the audio I/O dependency) have been validated.  An absent
+    # status file remains compatible with a deliberately pre-provisioned
+    # legacy runtime.
+    ready = not missing and (status_payload is None or status == "ready")
     return {
         "required": settings.enable_longcat,
         "ready": ready,
-        "status": "ready" if ready else str(status_payload.get("status") or "missing"),
+        "status": "ready" if ready else str((status_payload or {}).get("status") or "missing"),
         "message": (
             "LongCat Video Avatar is ready."
             if ready
-            else str(status_payload.get("message") or "LongCat Video Avatar provisioning is incomplete.")
+            else str((status_payload or {}).get("message") or "LongCat Video Avatar provisioning is incomplete.")
         ),
-        "progressPercent": 100.0 if ready else float(status_payload.get("progressPercent") or 0),
+        "progressPercent": 100.0 if ready else float((status_payload or {}).get("progressPercent") or 0),
         "missing": missing,
         "statusFile": settings.longcat_provisioning_status_file.as_posix(),
-        "error": status_payload.get("error"),
+        "error": (status_payload or {}).get("error"),
     }
 
 

@@ -43,6 +43,40 @@ def test_longcat_huggingface_downloads_are_limited_to_three_workers() -> None:
     assert script.count('--max-workers "${MODEL_DOWNLOAD_CONCURRENCY}"') == 2
 
 
+def test_longcat_does_not_report_ready_until_active_provisioning_finishes(tmp_path: Path) -> None:
+    repo = tmp_path / "LongCat-Video"
+    checkpoint = tmp_path / "model-cache" / "LongCat-Video-Avatar-1.5"
+    runtime_weights = checkpoint.parent / "LongCat-Video"
+    env_dir = tmp_path / "venv"
+    status_file = tmp_path / "longcat-status.json"
+    for path in [
+        repo / "run_demo_avatar_multi_audio_to_video.py",
+        runtime_weights / "tokenizer" / "tokenizer_config.json",
+        checkpoint / "base_model_int8" / "quantized_model.safetensors.index.json",
+        checkpoint / "lora" / "dmd_lora.safetensors",
+        checkpoint / "whisper-large-v3" / "config.json",
+        env_dir / "bin" / "torchrun",
+    ]:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("ready", encoding="utf-8")
+    settings = SimpleNamespace(
+        enable_longcat=True,
+        longcat_repo_dir=repo,
+        longcat_checkpoint_dir=checkpoint,
+        longcat_conda_env_dir=env_dir,
+        longcat_provisioning_status_file=status_file,
+    )
+
+    status_file.write_text(
+        json.dumps({"status": "provisioning", "progressPercent": 8}),
+        encoding="utf-8",
+    )
+    assert provisioning._check_longcat(settings)["ready"] is False
+
+    status_file.write_text(json.dumps({"status": "ready"}), encoding="utf-8")
+    assert provisioning._check_longcat(settings)["ready"] is True
+
+
 def test_ltx_downloader_uses_configured_parallelism_without_exceeding_it(tmp_path: Path, monkeypatch) -> None:
     models = [
         downloader.ComfyModelFile(
