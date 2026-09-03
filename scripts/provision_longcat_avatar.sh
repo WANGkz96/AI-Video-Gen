@@ -118,7 +118,7 @@ if ! "${PYTHON_BIN}" -m pip --version >/dev/null 2>&1; then
 fi
 "${PYTHON_BIN}" -m pip install --upgrade pip "setuptools<82" wheel
 "${PYTHON_BIN}" -m pip install torch==2.7.1+cu128 torchvision==0.22.1+cu128 torchaudio==2.7.1+cu128 --index-url https://download.pytorch.org/whl/cu128
-"${PYTHON_BIN}" -m pip install numpy==1.26.4 ninja psutil packaging huggingface_hub
+"${PYTHON_BIN}" -m pip install numpy==1.26.4 ninja psutil packaging huggingface_hub soundfile==0.12.1
 
 REQ_BASE="${ROOT_DIR}/data/tmp/longcat-requirements.txt"
 REQ_AVATAR="${ROOT_DIR}/data/tmp/longcat-requirements-avatar.txt"
@@ -127,6 +127,11 @@ grep -Ev '^(torch|torchvision|torchaudio|numpy|flash-attn)([<=>].*)?$' "${LONGCA
 grep -Ev '^(torch|torchvision|torchaudio|numpy|sympy|libsndfile1|tritonserverclient)([<=>].*)?$' "${LONGCAT_REPO_DIR}/requirements_avatar.txt" > "${REQ_AVATAR}"
 "${PYTHON_BIN}" -m pip install -r "${REQ_BASE}" -r "${REQ_AVATAR}"
 "${PYTHON_BIN}" -m pip install flash-attn==2.7.4.post1 --no-build-isolation
+# The batched Avatar runner imports soundfile directly for spoken-track I/O.
+# Keep it explicit because the upstream requirement files do not reliably
+# declare it across revisions; a successful provisioning must guarantee that
+# the job runner can import every runtime dependency.
+"${PYTHON_BIN}" -c "import soundfile"
 
 write_status "downloading" "20" "Downloading only LongCat files used by Avatar 1.5 INT8 + distilled runtime."
 # The Hugging Face CLI reads HF_TOKEN from its environment.  Do not pass it as

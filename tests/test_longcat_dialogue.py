@@ -141,6 +141,8 @@ def test_longcat_batch_runner_is_provisioned_and_keeps_model_loading_outside_sce
     runner = (root / "scripts" / "run_longcat_avatar_batch.py").read_text(encoding="utf-8")
 
     assert "run_longcat_avatar_batch.py" in provision
+    assert "soundfile==0.12.1" in provision
+    assert '"${PYTHON_BIN}" -c "import soundfile"' in provision
     assert "LongCat models loaded; rendering scenes without further weight reloads" in runner
     assert "for index, scene in enumerate(scenes, start=1):" in runner
     assert runner.index("def _load_runtime") < runner.index("def _render_scene")
