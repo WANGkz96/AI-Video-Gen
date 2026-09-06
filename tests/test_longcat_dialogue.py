@@ -7,7 +7,7 @@ import httpx
 from backend.app.adapters.comfyui import ComfyUiWorkflowAdapter
 from backend.app.adapters.longcat_avatar import LongCatAvatarAdapter
 from backend.app.models import BatchExport
-from scripts.patch_longcat_runtime import patch_source
+from scripts.patch_longcat_runtime import patch_avatar_attention_source, patch_source
 
 
 def _write_pcm_wav(path: Path, samples: list[int], sample_rate: int = 24_000) -> None:
@@ -112,6 +112,47 @@ def generate(args):
     assert "target_orientation = str(input_data.get('target_orientation'" in patched
     assert "height, width = width, height" in patched
     assert patched.count("Applying target orientation") == 2
+
+
+def test_longcat_runtime_uses_native_sdpa_for_avatar_flash_attention_on_blackwell() -> None:
+    pristine = """import torch
+import torch.nn as nn
+
+        elif self.enable_flashattn2:
+            from flash_attn import flash_attn_func
+            q = rearrange(q, \"B H S D -> B S H D\")
+            k = rearrange(k, \"B H S D -> B S H D\")
+            v = rearrange(v, \"B H S D -> B S H D\")
+            x = flash_attn_func(
+                q,
+                k,
+                v,
+                dropout_p=0.0,
+                softmax_scale=self.scale,
+            )
+            x = rearrange(x, \"B S H D -> B H S D\")
+        elif self.enable_flashattn2:
+            from flash_attn import flash_attn_func
+            q = rearrange(q, \"B H S D -> B S H D\")
+            encoder_k = rearrange(encoder_k, \"B H S D -> B S H D\")
+            encoder_v = rearrange(encoder_v, \"B H S D -> B S H D\")
+            x = flash_attn_func(
+                q,
+                encoder_k,
+                encoder_v,
+                dropout_p=0.0,
+                softmax_scale=self.scale,
+            )
+            x = rearrange(x, \"B S H D -> B H S D\")
+"""
+    attention = Path("attention.py")
+    patched = patch_avatar_attention_source(pristine, attention)
+
+    assert patch_avatar_attention_source(patched, attention) == patched
+    assert "import torch.nn.functional as F" in patched
+    assert patched.count("F.scaled_dot_product_attention") == 2
+    assert patched.count("get_device_capability()[0] == 12") == 2
+    assert patched.count("from flash_attn import flash_attn_func") == 2
 
 
 def test_longcat_adapter_makes_fully_silent_track_separator_compatible(tmp_path: Path) -> None:

@@ -4,6 +4,9 @@ import argparse
 from pathlib import Path
 
 
+BLACKWELL_SDPA_MARKER = "AI-Video-Gen Blackwell SDPA fallback"
+
+
 def patch_source(source: str, runner: Path) -> str:
     marker = "RTX PRO 6000 Blackwell workaround"
     if marker not in source:
@@ -80,6 +83,105 @@ def patch_source(source: str, runner: Path) -> str:
     return source
 
 
+def patch_avatar_attention_source(source: str, attention: Path) -> str:
+    """Use PyTorch's tested SDPA kernel instead of flash-attn 2 on Blackwell.
+
+    Avatar 1.5's INT8 config enables ``flashattn2``.  flash-attn 2.7.4 can
+    intermittently corrupt the CUDA context on RTX PRO 6000 Blackwell while
+    rendering a real Avatar scene.  PyTorch 2.7.1+cu128's native SDPA path is
+    stable on that GPU and retains the regular flash-attn path elsewhere.
+    """
+    if BLACKWELL_SDPA_MARKER in source:
+        return source
+
+    import_anchor = "import torch\nimport torch.nn as nn\n"
+    if import_anchor not in source:
+        raise RuntimeError(f"Cannot find torch imports in {attention}")
+    source = source.replace(
+        import_anchor,
+        "import torch\nimport torch.nn as nn\nimport torch.nn.functional as F\n",
+        1,
+    )
+
+    self_attention_branch = """        elif self.enable_flashattn2:
+            from flash_attn import flash_attn_func
+            q = rearrange(q, \"B H S D -> B S H D\")
+            k = rearrange(k, \"B H S D -> B S H D\")
+            v = rearrange(v, \"B H S D -> B S H D\")
+            x = flash_attn_func(
+                q,
+                k,
+                v,
+                dropout_p=0.0,
+                softmax_scale=self.scale,
+            )
+            x = rearrange(x, \"B S H D -> B H S D\")
+"""
+    self_attention_replacement = """        elif self.enable_flashattn2:
+            # AI-Video-Gen Blackwell SDPA fallback: flash-attn 2.7.4 can
+            # intermittently cause CUDA illegal-memory-access errors on SM120.
+            if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] == 12:
+                x = F.scaled_dot_product_attention(
+                    q, k, v, dropout_p=0.0, scale=self.scale
+                )
+            else:
+                from flash_attn import flash_attn_func
+                q = rearrange(q, \"B H S D -> B S H D\")
+                k = rearrange(k, \"B H S D -> B S H D\")
+                v = rearrange(v, \"B H S D -> B S H D\")
+                x = flash_attn_func(
+                    q,
+                    k,
+                    v,
+                    dropout_p=0.0,
+                    softmax_scale=self.scale,
+                )
+                x = rearrange(x, \"B S H D -> B H S D\")
+"""
+    if self_attention_branch not in source:
+        raise RuntimeError(f"Cannot find Avatar self-attention flash-attn branch in {attention}")
+    source = source.replace(self_attention_branch, self_attention_replacement, 1)
+
+    cross_attention_branch = """        elif self.enable_flashattn2:
+            from flash_attn import flash_attn_func
+            q = rearrange(q, \"B H S D -> B S H D\")
+            encoder_k = rearrange(encoder_k, \"B H S D -> B S H D\")
+            encoder_v = rearrange(encoder_v, \"B H S D -> B S H D\")
+            x = flash_attn_func(
+                q,
+                encoder_k,
+                encoder_v,
+                dropout_p=0.0,
+                softmax_scale=self.scale,
+            )
+            x = rearrange(x, \"B S H D -> B H S D\")
+"""
+    cross_attention_replacement = """        elif self.enable_flashattn2:
+            # AI-Video-Gen Blackwell SDPA fallback: flash-attn 2.7.4 can
+            # intermittently cause CUDA illegal-memory-access errors on SM120.
+            if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] == 12:
+                x = F.scaled_dot_product_attention(
+                    q, encoder_k, encoder_v, dropout_p=0.0, scale=self.scale
+                )
+            else:
+                from flash_attn import flash_attn_func
+                q = rearrange(q, \"B H S D -> B S H D\")
+                encoder_k = rearrange(encoder_k, \"B H S D -> B S H D\")
+                encoder_v = rearrange(encoder_v, \"B H S D -> B S H D\")
+                x = flash_attn_func(
+                    q,
+                    encoder_k,
+                    encoder_v,
+                    dropout_p=0.0,
+                    softmax_scale=self.scale,
+                )
+                x = rearrange(x, \"B S H D -> B H S D\")
+"""
+    if cross_attention_branch not in source:
+        raise RuntimeError(f"Cannot find Avatar cross-attention flash-attn branch in {attention}")
+    return source.replace(cross_attention_branch, cross_attention_replacement, 1)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", required=True)
@@ -89,6 +191,12 @@ def main() -> None:
     source = runner.read_text(encoding="utf-8")
     source = patch_source(source, runner)
     runner.write_text(source, encoding="utf-8")
+    attention = repo / "longcat_video" / "modules" / "avatar" / "attention.py"
+    attention_source = attention.read_text(encoding="utf-8")
+    attention.write_text(
+        patch_avatar_attention_source(attention_source, attention),
+        encoding="utf-8",
+    )
     print(f"Patched LongCat runtime: {runner}")
 
 
