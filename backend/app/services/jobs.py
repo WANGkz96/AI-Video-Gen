@@ -640,6 +640,8 @@ class JobService:
                 "videoId": video.videoId,
                 "projectId": video.projectId,
                 "runId": video.runId,
+                "operation": video.operation,
+                "regenerationRequestId": video.regenerationRequestId,
                 "variants": [],
             }
             for variant in video.variants:
@@ -922,6 +924,8 @@ class JobService:
             )
             segment_entry: dict[str, Any] = {
                 "segmentId": segment.segmentId,
+                "operation": video.operation,
+                "regenerationRequestId": video.regenerationRequestId,
                 "segmentVariantCount": segment_variant_count,
                 "candidates": [],
             }
@@ -1037,7 +1041,11 @@ class JobService:
                 "info",
                 f"[{video.videoId}/{variant.key}] Dialogue scene {scene.sceneIndex} -> {scene.sceneId}",
             )
-            scene_entry: dict[str, Any] = {"sceneId": scene.sceneId}
+            scene_entry: dict[str, Any] = {
+                "sceneId": scene.sceneId,
+                "operation": video.operation,
+                "regenerationRequestId": video.regenerationRequestId,
+            }
             variant_entry["dialogueScenes"].append(scene_entry)
             try:
                 request = self._build_dialogue_scene_request(runtime, video, variant, manifest, scene)
@@ -1113,6 +1121,8 @@ class JobService:
             "videoId": video.videoId,
             "projectId": video.projectId,
             "runId": video.runId,
+            "operation": video.operation,
+            "regenerationRequestId": video.regenerationRequestId,
             "variantKey": variant.key,
             "sceneId": scene.sceneId,
             "sceneIndex": scene.sceneIndex,
@@ -1173,7 +1183,11 @@ class JobService:
             "info",
             f"[{video.videoId}/{variant.key}] Dialogue scene {scene.sceneIndex} -> {scene.sceneId}",
         )
-        scene_entry: dict[str, Any] = {"sceneId": scene.sceneId}
+        scene_entry: dict[str, Any] = {
+            "sceneId": scene.sceneId,
+            "operation": video.operation,
+            "regenerationRequestId": video.regenerationRequestId,
+        }
         variant_entry["dialogueScenes"].append(scene_entry)
         try:
             request = self._build_dialogue_scene_request(runtime, video, variant, manifest, scene)
@@ -1194,6 +1208,8 @@ class JobService:
                 "videoId": video.videoId,
                 "projectId": video.projectId,
                 "runId": video.runId,
+                "operation": video.operation,
+                "regenerationRequestId": video.regenerationRequestId,
                 "variantKey": variant.key,
                 "sceneId": scene.sceneId,
                 "sceneIndex": scene.sceneIndex,
@@ -1347,6 +1363,8 @@ class JobService:
             "videoId": video.videoId,
             "projectId": video.projectId,
             "runId": video.runId,
+            "operation": video.operation,
+            "regenerationRequestId": video.regenerationRequestId,
             "variantKey": variant.key,
             "segmentId": segment.segmentId,
             "segmentIndex": segment.segmentIndex,

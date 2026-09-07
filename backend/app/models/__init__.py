@@ -182,6 +182,8 @@ class VideoInfo(BaseSchema):
     status: str
     createdAt: datetime
     updatedAt: datetime
+    operation: str = "deferred_generation"
+    regenerationRequestId: str | None = None
     project: ProjectInfo
     videoTemplate: VideoTemplateInfo
     outputProfile: dict[str, Any] = Field(default_factory=dict)
