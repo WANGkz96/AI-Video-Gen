@@ -271,7 +271,12 @@ def test_turbo_memory_error_recommends_standard_retry() -> None:
         )
     )
 
-    service._mark_turbo_instability(runtime, RuntimeError("CUDA out of memory"))
+    service._mark_turbo_instability(
+        runtime,
+        RuntimeError("CUDA out of memory"),
+        backend="comfyui-ltx25",
+    )
 
     assert runtime.snapshot.turboFallbackRecommended is True
     assert runtime.snapshot.executionProfile["degradedReason"] == "gpu_memory_failure"
+    assert runtime.snapshot.executionProfile["unstableBackend"] == "comfyui-ltx25"

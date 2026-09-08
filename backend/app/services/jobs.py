@@ -796,6 +796,8 @@ class JobService:
             raise AdapterUnavailableError(f"Unsupported batch generation branch '{backend}'.")
 
         for video, variant, variant_entry in work_items:
+            if self._turbo_branch_unstable(runtime, backend):
+                break
             await self._process_variant(
                 runtime,
                 adapter,
@@ -887,11 +889,16 @@ class JobService:
                 f"Turbo branch '{backend}' is ready and running concurrently.",
             )
             await self._process_generation_branch(runtime, backend, work_items)
+            if self._turbo_branch_unstable(runtime, backend):
+                message = "Turbo branch halted after a GPU memory failure."
+                await self._set_branch_state(runtime, backend, "failed", error=message)
+                await self._log(runtime, "error", f"Turbo branch '{backend}' halted: {message}")
+                return RuntimeError(message)
             await self._set_branch_state(runtime, backend, "completed")
             await self._log(runtime, "info", f"Turbo branch '{backend}' completed.")
             return None
         except Exception as exc:
-            self._mark_turbo_instability(runtime, exc)
+            self._mark_turbo_instability(runtime, exc, backend=backend)
             await self._set_branch_state(runtime, backend, "failed", error=str(exc))
             await self._log(runtime, "error", f"Turbo branch '{backend}' failed: {exc}")
             return exc
@@ -925,7 +932,17 @@ class JobService:
                 }
             )
 
-    def _mark_turbo_instability(self, runtime: JobRuntime, error: Exception | str) -> None:
+    @staticmethod
+    def _turbo_branch_unstable(runtime: JobRuntime, backend: str) -> bool:
+        return runtime.snapshot.executionProfile.get("unstableBackend") == backend
+
+    def _mark_turbo_instability(
+        self,
+        runtime: JobRuntime,
+        error: Exception | str,
+        *,
+        backend: str | None = None,
+    ) -> None:
         if runtime.snapshot.executionProfile.get("effective") != "turbo":
             return
         text = str(error).lower()
@@ -940,6 +957,7 @@ class JobService:
             runtime.snapshot.executionProfile = {
                 **runtime.snapshot.executionProfile,
                 "unstable": True,
+                "unstableBackend": backend,
                 "degradedReason": "gpu_memory_failure",
             }
 
@@ -1178,7 +1196,7 @@ class JobService:
                         ),
                     )
             except Exception as exc:
-                self._mark_turbo_instability(runtime, exc)
+                self._mark_turbo_instability(runtime, exc, backend=adapter.key)
                 segment_entry.update({"status": "failed", "error": str(exc)})
                 runtime.snapshot.failedSegments += 1
                 runtime.snapshot.updatedAt = utc_now()
@@ -1338,7 +1356,7 @@ class JobService:
         scene_id: str,
         error: Exception,
     ) -> None:
-        self._mark_turbo_instability(runtime, error)
+        self._mark_turbo_instability(runtime, error, backend=LongCatAvatarAdapter.key)
         scene_entry.update({"status": "failed", "error": str(error)})
         runtime.snapshot.failedSegments += 1
         runtime.snapshot.updatedAt = utc_now()
