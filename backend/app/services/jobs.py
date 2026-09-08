@@ -934,7 +934,8 @@ class JobService:
 
     @staticmethod
     def _turbo_branch_unstable(runtime: JobRuntime, backend: str) -> bool:
-        return runtime.snapshot.executionProfile.get("unstableBackend") == backend
+        profile = getattr(runtime.snapshot, "executionProfile", {}) or {}
+        return profile.get("unstableBackend") == backend
 
     def _mark_turbo_instability(
         self,
