@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 
 from backend.app.config import Settings
+from backend.app.services.gpu_telemetry import read_gpu_telemetry
 
 
 COMFY_LTX25_MODELS = [
@@ -157,6 +158,19 @@ def _check_comfy(settings: Settings) -> tuple[bool, str | None]:
 
 
 def get_provisioning_status(settings: Settings) -> dict[str, Any]:
+    gpu_telemetry = read_gpu_telemetry()
+    execution_profile = getattr(settings, "execution_profile", "standard")
+    turbo_min_vram_gb = float(getattr(settings, "turbo_min_vram_gb", 160))
+    turbo_max_concurrent_branches = int(
+        getattr(settings, "turbo_max_concurrent_branches", 2)
+    )
+    turbo_supported = (
+        execution_profile != "turbo"
+        or (
+            gpu_telemetry.get("available") is True
+            and float(gpu_telemetry.get("totalVramGb") or 0) >= turbo_min_vram_gb
+        )
+    )
     model_files = list_comfy_ltx25_model_files(settings) if settings.enable_ltx else []
     missing = [model for model in model_files if not model["ready"]]
     workflows = [
@@ -228,12 +242,20 @@ def get_provisioning_status(settings: Settings) -> dict[str, Any]:
         "progressPercent": max(0.0, min(100.0, ltx_progress_percent)),
         "error": ltx_error,
     }
-    ready = ltx_ready and longcat_ready
+    ready = ltx_ready and longcat_ready and turbo_supported
     if ready:
         status = "ready"
         enabled = [name for name, flag in [("LTX 2.5", settings.enable_ltx), ("LongCat Avatar", settings.enable_longcat)] if flag]
         message = f"All required generators are ready: {', '.join(enabled) or 'none'}."
         progress_percent = 100.0
+    elif not turbo_supported:
+        status = "turbo_preflight_failed"
+        message = (
+            "Turbo requires a visible GPU with at least "
+            f"{turbo_min_vram_gb:g} GB VRAM; detected "
+            f"{float(gpu_telemetry.get('totalVramGb') or 0):g} GB."
+        )
+        progress_percent = 0.0
     elif settings.enable_longcat and not longcat_ready:
         status = longcat["status"]
         message = longcat["message"]
@@ -284,6 +306,17 @@ def get_provisioning_status(settings: Settings) -> dict[str, Any]:
             "ltx": settings.enable_ltx,
             "longcatVideoAvatar": settings.enable_longcat,
         },
+        "executionProfile": {
+            "requested": execution_profile,
+            "supported": turbo_supported,
+            "maxConcurrentBranches": (
+                turbo_max_concurrent_branches
+                if execution_profile == "turbo"
+                else 1
+            ),
+            "minimumVramGb": turbo_min_vram_gb,
+        },
+        "gpuTelemetry": gpu_telemetry,
         "branches": {
             "comfyui-ltx25": ltx,
             "longcat-video-avatar": {

@@ -82,6 +82,10 @@ def _parse_bool(value: str | None, fallback: bool = False) -> bool:
     return fallback
 
 
+def _parse_execution_profile(value: str | None) -> str:
+    return "turbo" if str(value or "").strip().lower() == "turbo" else "standard"
+
+
 @dataclass(slots=True)
 class Settings:
     port: int
@@ -119,6 +123,9 @@ class Settings:
     enable_ltx: bool
     enable_longcat: bool
     release_longcat_weights_after_branch: bool
+    execution_profile: str
+    turbo_max_concurrent_branches: int
+    turbo_min_vram_gb: float
     persistent_model_cache_dir: Path | None
     ltx_model_root: Path
     longcat_branch_release_file: Path | None
@@ -223,6 +230,17 @@ class Settings:
             release_longcat_weights_after_branch=_parse_bool(
                 os.getenv("AI_VIDEO_GEN_RELEASE_LONGCAT_WEIGHTS_AFTER_BRANCH"),
                 False,
+            ),
+            execution_profile=_parse_execution_profile(
+                os.getenv("AI_VIDEO_GEN_EXECUTION_PROFILE")
+            ),
+            turbo_max_concurrent_branches=max(
+                1,
+                min(2, int(os.getenv("AI_VIDEO_GEN_TURBO_MAX_CONCURRENT_BRANCHES", "2"))),
+            ),
+            turbo_min_vram_gb=max(
+                1.0,
+                float(os.getenv("AI_VIDEO_GEN_TURBO_MIN_VRAM_GB", "160")),
             ),
             persistent_model_cache_dir=persistent_model_cache_dir,
             ltx_model_root=ltx_model_root,

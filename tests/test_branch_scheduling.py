@@ -147,3 +147,131 @@ def test_configured_backend_can_queue_before_its_download_finishes() -> None:
     service._settings.enable_longcat = False
     with pytest.raises(AdapterUnavailableError, match="still downloading"):
         service._ensure_backend_can_queue("longcat-video-avatar")
+
+
+def test_turbo_runs_ltx_and_longcat_branches_concurrently() -> None:
+    service = _service()
+    service._wait_for_ready_backend = AsyncMock(side_effect=lambda _runtime, backends: backends[0])
+    service._set_branch_state = AsyncMock()
+    active = 0
+    peak = 0
+
+    async def process_branch(_runtime, _backend, _work_items):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.02)
+        active -= 1
+
+    service._process_generation_branch = process_branch
+    runtime = SimpleNamespace(
+        snapshot=SimpleNamespace(
+            status="running",
+            executionProfile={"effective": "turbo"},
+            turboFallbackRecommended=False,
+        )
+    )
+    result_doc = {"errors": []}
+
+    asyncio.run(
+        service._process_turbo_branches(
+            runtime,
+            ["comfyui-ltx25", "longcat-video-avatar"],
+            [],
+            result_doc,
+        )
+    )
+
+    assert peak == 2
+    assert result_doc["errors"] == []
+
+
+def test_turbo_branch_failure_does_not_cancel_the_healthy_branch() -> None:
+    service = _service()
+    service._wait_for_ready_backend = AsyncMock(side_effect=lambda _runtime, backends: backends[0])
+    service._set_branch_state = AsyncMock()
+    completed = []
+
+    async def process_branch(_runtime, backend, _work_items):
+        if backend == "comfyui-ltx25":
+            raise RuntimeError("LTX failed")
+        await asyncio.sleep(0.01)
+        completed.append(backend)
+
+    service._process_generation_branch = process_branch
+    runtime = SimpleNamespace(
+        snapshot=SimpleNamespace(
+            status="running",
+            executionProfile={"effective": "turbo"},
+            turboFallbackRecommended=False,
+        )
+    )
+    result_doc = {"errors": []}
+
+    asyncio.run(
+        service._process_turbo_branches(
+            runtime,
+            ["comfyui-ltx25", "longcat-video-avatar"],
+            [],
+            result_doc,
+        )
+    )
+
+    assert completed == ["longcat-video-avatar"]
+    assert result_doc["errors"][0]["backend"] == "comfyui-ltx25"
+
+
+def test_turbo_single_branch_effectively_remains_sequential(monkeypatch) -> None:
+    service = _service()
+    service._settings.execution_profile = "turbo"
+    service._settings.turbo_max_concurrent_branches = 2
+    service._settings.turbo_min_vram_gb = 160
+    monkeypatch.setattr(
+        jobs_module,
+        "read_gpu_telemetry",
+        lambda: {"available": True, "totalVramGb": 180},
+    )
+
+    profile, _telemetry, branch_state = service._resolve_execution_profile(
+        has_regular_segments=True,
+        has_dialogue_scenes=False,
+    )
+
+    assert profile["requested"] == "turbo"
+    assert profile["effective"] == "standard"
+    assert profile["maxConcurrentBranches"] == 1
+    assert profile["degradedReason"] == "single_branch"
+    assert list(branch_state) == ["comfyui-ltx25"]
+
+
+def test_turbo_rejects_gpu_below_vram_floor(monkeypatch) -> None:
+    service = _service()
+    service._settings.execution_profile = "turbo"
+    service._settings.turbo_max_concurrent_branches = 2
+    service._settings.turbo_min_vram_gb = 160
+    monkeypatch.setattr(
+        jobs_module,
+        "read_gpu_telemetry",
+        lambda: {"available": True, "totalVramGb": 96},
+    )
+
+    with pytest.raises(AdapterUnavailableError, match="at least 160 GB VRAM"):
+        service._resolve_execution_profile(
+            has_regular_segments=True,
+            has_dialogue_scenes=True,
+        )
+
+
+def test_turbo_memory_error_recommends_standard_retry() -> None:
+    service = _service()
+    runtime = SimpleNamespace(
+        snapshot=SimpleNamespace(
+            executionProfile={"effective": "turbo"},
+            turboFallbackRecommended=False,
+        )
+    )
+
+    service._mark_turbo_instability(runtime, RuntimeError("CUDA out of memory"))
+
+    assert runtime.snapshot.turboFallbackRecommended is True
+    assert runtime.snapshot.executionProfile["degradedReason"] == "gpu_memory_failure"

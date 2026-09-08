@@ -35,6 +35,7 @@ from backend.app.models import (
     VariantManifest,
     VideoInfo,
 )
+from backend.app.services.gpu_telemetry import read_gpu_telemetry
 from backend.app.services.media import probe_video
 from backend.app.services.provisioning import get_provisioning_status
 
@@ -93,11 +94,14 @@ class JobService:
             if runtime.snapshot.status in {"queued", "running", "waiting_for_backend"}
         )
         provisioning = get_provisioning_status(self._settings)
+        turbo_supported = bool(
+            (provisioning.get("executionProfile") or {}).get("supported", True)
+        )
         return {
             "status": "ok" if provisioning["ready"] else provisioning["status"],
             "ready": provisioning["ready"],
             "apiReady": True,
-            "acceptingJobs": True,
+            "acceptingJobs": turbo_supported,
             "defaultBackend": self._settings.generator_backend,
             "queuedJobs": self._queue.qsize(),
             "activeJobs": active_jobs,
@@ -138,6 +142,10 @@ class JobService:
             self._ensure_backend_can_queue(selected_backend)
         if has_dialogue_scenes:
             self._ensure_backend_can_queue(LongCatAvatarAdapter.key)
+        execution_profile, gpu_telemetry, branch_state = self._resolve_execution_profile(
+            has_regular_segments=has_regular_segments,
+            has_dialogue_scenes=has_dialogue_scenes,
+        )
         total_videos = len(batch.videos)
         total_variants = sum(len(video.variants) for video in batch.videos)
         total_segments = sum(
@@ -170,6 +178,9 @@ class JobService:
             totalSegments=total_segments,
             updatedAt=utc_now(),
             inputFile=input_path.relative_to(workspace_dir).as_posix(),
+            executionProfile=execution_profile,
+            gpuTelemetry=gpu_telemetry,
+            branchState=branch_state,
         )
         runtime = JobRuntime(
             snapshot=snapshot,
@@ -192,6 +203,15 @@ class JobService:
             target_path.write_bytes(content)
         self._write_snapshot(runtime)
         await self._log(runtime, "info", f"Job {job_id} queued with backend '{selected_backend}'.")
+        await self._log(
+            runtime,
+            "info",
+            (
+                f"Execution profile: requested={execution_profile['requested']}, "
+                f"effective={execution_profile['effective']}, "
+                f"maxConcurrentBranches={execution_profile['maxConcurrentBranches']}."
+            ),
+        )
         await self._queue.put(job_id)
         return JobQueuedResponse(jobId=job_id, status=snapshot.status)
 
@@ -332,6 +352,50 @@ class JobService:
             "Use 'cogvideox-5b' instead.",
         )
         return registry
+
+    def _resolve_execution_profile(
+        self,
+        *,
+        has_regular_segments: bool,
+        has_dialogue_scenes: bool,
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        requested = str(getattr(self._settings, "execution_profile", "standard"))
+        max_concurrent = max(
+            1,
+            min(2, int(getattr(self._settings, "turbo_max_concurrent_branches", 2))),
+        )
+        minimum_vram_gb = float(getattr(self._settings, "turbo_min_vram_gb", 160))
+        telemetry = read_gpu_telemetry()
+        if requested == "turbo":
+            detected_vram_gb = float(telemetry.get("totalVramGb") or 0)
+            if telemetry.get("available") is not True or detected_vram_gb < minimum_vram_gb:
+                raise AdapterUnavailableError(
+                    "Turbo requires a visible GPU with at least "
+                    f"{minimum_vram_gb:g} GB VRAM; detected {detected_vram_gb:g} GB."
+                )
+
+        required_branches = []
+        if has_regular_segments:
+            required_branches.append(ComfyUiWorkflowAdapter.key)
+        if has_dialogue_scenes:
+            required_branches.append(LongCatAvatarAdapter.key)
+        overlap_enabled = requested == "turbo" and len(required_branches) > 1 and max_concurrent > 1
+        effective = "turbo" if overlap_enabled else "standard"
+        reason = None
+        if requested == "turbo" and not overlap_enabled:
+            reason = "single_branch" if len(required_branches) <= 1 else "concurrency_cap"
+        profile = {
+            "requested": requested,
+            "effective": effective,
+            "maxConcurrentBranches": 2 if overlap_enabled else 1,
+            "minimumVramGb": minimum_vram_gb,
+            "degradedReason": reason,
+        }
+        branch_state = {
+            branch: {"status": "queued"}
+            for branch in required_branches
+        }
+        return profile, telemetry, branch_state
 
     def _ensure_backend_can_queue(self, backend: str) -> None:
         if backend not in self._adapters:
@@ -630,6 +694,7 @@ class JobService:
         result_doc: dict[str, Any] = {
             "schemaVersion": "video-pipeline.external-generation.output.v1",
             "generatedAt": utc_now().isoformat(),
+            "executionProfile": dict(runtime.snapshot.executionProfile),
             "videos": [],
             "errors": [],
         }
@@ -678,47 +743,21 @@ class JobService:
         ) and LongCatAvatarAdapter.key not in pending_backends:
             pending_backends.append(LongCatAvatarAdapter.key)
 
-        while pending_backends:
-            backend = await self._wait_for_ready_backend(runtime, pending_backends)
-            runtime.snapshot.status = "running"
-            runtime.snapshot.updatedAt = utc_now()
-            self._write_snapshot(runtime)
-            await self._broadcast_snapshot(runtime)
-            await self._log(
+        if runtime.snapshot.executionProfile.get("effective") == "turbo":
+            await self._process_turbo_branches(
                 runtime,
-                "info",
-                f"Backend '{backend}' is ready; starting its generation branch.",
+                pending_backends,
+                work_items,
+                result_doc,
             )
-            self._release_adapters(except_backend=backend)
-            await self._process_generation_branch(runtime, backend, work_items)
-            pending_backends.remove(backend)
-            await self._log(runtime, "info", f"Generation branch '{backend}' completed.")
-            if (
-                backend == LongCatAvatarAdapter.key
-                and ComfyUiWorkflowAdapter.key in pending_backends
-                and self._settings.release_longcat_weights_after_branch
-            ):
-                released_path, was_released = await asyncio.to_thread(self._release_longcat_weights)
-                release_signal = await asyncio.to_thread(self._signal_longcat_branch_release)
-                cache_action = (
-                    f"Released LongCat weights at {released_path}"
-                    if was_released
-                    else f"Retained persistent LongCat model cache at {released_path}"
-                )
-                await self._log(
-                    runtime,
-                    "info",
-                    (
-                        f"{cache_action} before the pending LTX branch."
-                        + (
-                            f" Opened the LTX download gate at {release_signal}."
-                            if release_signal
-                            else ""
-                        )
-                    ),
-                )
+        else:
+            await self._process_standard_branches(runtime, pending_backends, work_items)
 
         result_doc["generatedAt"] = utc_now().isoformat()
+        result_doc["executionProfile"] = {
+            **runtime.snapshot.executionProfile,
+            "turboFallbackRecommended": runtime.snapshot.turboFallbackRecommended,
+        }
         validation_errors = self._validate_result(runtime, result_doc)
         if validation_errors:
             result_doc["errors"].extend(validation_errors)
@@ -766,6 +805,143 @@ class JobService:
                 process_segments=process_segments,
                 process_dialogue_scenes=process_dialogue_scenes,
             )
+
+    async def _set_branch_state(
+        self,
+        runtime: JobRuntime,
+        backend: str,
+        status: str,
+        *,
+        error: str | None = None,
+    ) -> None:
+        state = dict(runtime.snapshot.branchState)
+        state[backend] = {
+            "status": status,
+            "updatedAt": utc_now().isoformat(),
+            **({"error": error} if error else {}),
+        }
+        runtime.snapshot.branchState = state
+        runtime.snapshot.gpuTelemetry = await asyncio.to_thread(read_gpu_telemetry)
+        runtime.snapshot.updatedAt = utc_now()
+        self._write_snapshot(runtime)
+        await self._broadcast_snapshot(runtime)
+
+    async def _process_standard_branches(
+        self,
+        runtime: JobRuntime,
+        pending_backends: list[str],
+        work_items: list[tuple[VideoInfo, VariantInfo, dict[str, Any]]],
+    ) -> None:
+        while pending_backends:
+            backend = await self._wait_for_ready_backend(runtime, pending_backends)
+            runtime.snapshot.status = "running"
+            await self._set_branch_state(runtime, backend, "running")
+            await self._log(
+                runtime,
+                "info",
+                f"Backend '{backend}' is ready; starting its generation branch.",
+            )
+            self._release_adapters(except_backend=backend)
+            await self._process_generation_branch(runtime, backend, work_items)
+            pending_backends.remove(backend)
+            await self._set_branch_state(runtime, backend, "completed")
+            await self._log(runtime, "info", f"Generation branch '{backend}' completed.")
+            if (
+                backend == LongCatAvatarAdapter.key
+                and ComfyUiWorkflowAdapter.key in pending_backends
+                and self._settings.release_longcat_weights_after_branch
+            ):
+                released_path, was_released = await asyncio.to_thread(self._release_longcat_weights)
+                release_signal = await asyncio.to_thread(self._signal_longcat_branch_release)
+                cache_action = (
+                    f"Released LongCat weights at {released_path}"
+                    if was_released
+                    else f"Retained persistent LongCat model cache at {released_path}"
+                )
+                await self._log(
+                    runtime,
+                    "info",
+                    (
+                        f"{cache_action} before the pending LTX branch."
+                        + (
+                            f" Opened the LTX download gate at {release_signal}."
+                            if release_signal
+                            else ""
+                        )
+                    ),
+                )
+
+    async def _process_turbo_branch(
+        self,
+        runtime: JobRuntime,
+        backend: str,
+        work_items: list[tuple[VideoInfo, VariantInfo, dict[str, Any]]],
+    ) -> Exception | None:
+        try:
+            await self._wait_for_ready_backend(runtime, [backend])
+            runtime.snapshot.status = "running"
+            await self._set_branch_state(runtime, backend, "running")
+            await self._log(
+                runtime,
+                "info",
+                f"Turbo branch '{backend}' is ready and running concurrently.",
+            )
+            await self._process_generation_branch(runtime, backend, work_items)
+            await self._set_branch_state(runtime, backend, "completed")
+            await self._log(runtime, "info", f"Turbo branch '{backend}' completed.")
+            return None
+        except Exception as exc:
+            self._mark_turbo_instability(runtime, exc)
+            await self._set_branch_state(runtime, backend, "failed", error=str(exc))
+            await self._log(runtime, "error", f"Turbo branch '{backend}' failed: {exc}")
+            return exc
+
+    async def _process_turbo_branches(
+        self,
+        runtime: JobRuntime,
+        pending_backends: list[str],
+        work_items: list[tuple[VideoInfo, VariantInfo, dict[str, Any]]],
+        result_doc: dict[str, Any],
+    ) -> None:
+        await self._log(
+            runtime,
+            "info",
+            "Turbo mode: starting independent LTX and LongCat generation lanes.",
+        )
+        outcomes = await asyncio.gather(
+            *(
+                self._process_turbo_branch(runtime, backend, work_items)
+                for backend in pending_backends
+            )
+        )
+        for backend, outcome in zip(pending_backends, outcomes, strict=True):
+            if outcome is None:
+                continue
+            result_doc["errors"].append(
+                {
+                    "backend": backend,
+                    "status": "failed",
+                    "error": str(outcome),
+                }
+            )
+
+    def _mark_turbo_instability(self, runtime: JobRuntime, error: Exception | str) -> None:
+        if runtime.snapshot.executionProfile.get("effective") != "turbo":
+            return
+        text = str(error).lower()
+        markers = (
+            "cuda out of memory",
+            "cuda error: out of memory",
+            "illegal memory access",
+            "cublas_status_alloc_failed",
+        )
+        if any(marker in text for marker in markers):
+            runtime.snapshot.turboFallbackRecommended = True
+            runtime.snapshot.executionProfile = {
+                **runtime.snapshot.executionProfile,
+                "unstable": True,
+                "degradedReason": "gpu_memory_failure",
+            }
 
     def _release_longcat_weights(self) -> tuple[Path, bool]:
         """Free the ephemeral-model payload once this job no longer needs Avatar.
@@ -1002,6 +1178,7 @@ class JobService:
                         ),
                     )
             except Exception as exc:
+                self._mark_turbo_instability(runtime, exc)
                 segment_entry.update({"status": "failed", "error": str(exc)})
                 runtime.snapshot.failedSegments += 1
                 runtime.snapshot.updatedAt = utc_now()
@@ -1161,6 +1338,7 @@ class JobService:
         scene_id: str,
         error: Exception,
     ) -> None:
+        self._mark_turbo_instability(runtime, error)
         scene_entry.update({"status": "failed", "error": str(error)})
         runtime.snapshot.failedSegments += 1
         runtime.snapshot.updatedAt = utc_now()

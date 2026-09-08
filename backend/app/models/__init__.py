@@ -242,6 +242,10 @@ class JobSnapshot(BaseSchema):
     resultFile: str | None = None
     archiveFile: str | None = None
     error: str | None = None
+    executionProfile: dict[str, Any] = Field(default_factory=dict)
+    gpuTelemetry: dict[str, Any] = Field(default_factory=dict)
+    branchState: dict[str, Any] = Field(default_factory=dict)
+    turboFallbackRecommended: bool = False
 
 
 class JobQueuedResponse(BaseSchema):

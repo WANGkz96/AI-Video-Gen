@@ -7,10 +7,21 @@ COMFY_ROOT="${COMFYUI_ROOT:-/workspace/ComfyUI}"
 GENERATOR_API_URL="${GENERATOR_API_URL:-http://127.0.0.1:18188}"
 AI_VIDEO_GEN_ENABLE_LTX="${AI_VIDEO_GEN_ENABLE_LTX:-1}"
 AI_VIDEO_GEN_ENABLE_LONGCAT="${AI_VIDEO_GEN_ENABLE_LONGCAT:-0}"
-# A mixed Packet job is deliberately serialized: LongCat downloads and renders
-# first, then releases its weights before the LTX model pack starts.  This
-# avoids filling Packet's 150 GB ephemeral root and needs no process pausing.
+AI_VIDEO_GEN_EXECUTION_PROFILE="${AI_VIDEO_GEN_EXECUTION_PROFILE:-standard}"
+AI_VIDEO_GEN_TURBO_MAX_CONCURRENT_BRANCHES="${AI_VIDEO_GEN_TURBO_MAX_CONCURRENT_BRANCHES:-2}"
+AI_VIDEO_GEN_TURBO_MIN_VRAM_GB="${AI_VIDEO_GEN_TURBO_MIN_VRAM_GB:-160}"
+if [ "${AI_VIDEO_GEN_EXECUTION_PROFILE}" != "turbo" ]; then
+  AI_VIDEO_GEN_EXECUTION_PROFILE="standard"
+fi
+# Standard mixed Packet jobs are deliberately serialized: LongCat downloads
+# and renders first, then releases its weights before the LTX model pack starts.
+# This avoids filling Packet's 150 GB ephemeral root and needs no process pausing.
 AI_VIDEO_GEN_RELEASE_LONGCAT_WEIGHTS_AFTER_BRANCH="${AI_VIDEO_GEN_RELEASE_LONGCAT_WEIGHTS_AFTER_BRANCH:-1}"
+if [ "${AI_VIDEO_GEN_EXECUTION_PROFILE}" = "turbo" ]; then
+  # Turbo keeps both model packs available and overlaps one LTX lane with one
+  # LongCat lane. Same-branch generation remains deliberately sequential.
+  AI_VIDEO_GEN_RELEASE_LONGCAT_WEIGHTS_AFTER_BRANCH=0
+fi
 STATUS_FILE="${AI_VIDEO_GEN_PROVISIONING_STATUS:-${ROOT_DIR}/data/provisioning-status.json}"
 LONGCAT_STATUS_FILE="${LONGCAT_PROVISIONING_STATUS:-${ROOT_DIR}/data/longcat-provisioning-status.json}"
 LONGCAT_RELEASE_FILE="${AI_VIDEO_GEN_LONGCAT_BRANCH_RELEASE_FILE:-${ROOT_DIR}/.run/longcat-branch-released.json}"
@@ -62,6 +73,9 @@ COMFYUI_I2V_WORKFLOW="${COMFY_ROOT}/blueprints/LTX-2.5_T2V_I2V_Single_Stage_Dist
 AI_VIDEO_GEN_ENABLE_LTX="${AI_VIDEO_GEN_ENABLE_LTX}" \
 AI_VIDEO_GEN_ENABLE_LONGCAT="${AI_VIDEO_GEN_ENABLE_LONGCAT}" \
 AI_VIDEO_GEN_RELEASE_LONGCAT_WEIGHTS_AFTER_BRANCH="${AI_VIDEO_GEN_RELEASE_LONGCAT_WEIGHTS_AFTER_BRANCH}" \
+AI_VIDEO_GEN_EXECUTION_PROFILE="${AI_VIDEO_GEN_EXECUTION_PROFILE}" \
+AI_VIDEO_GEN_TURBO_MAX_CONCURRENT_BRANCHES="${AI_VIDEO_GEN_TURBO_MAX_CONCURRENT_BRANCHES}" \
+AI_VIDEO_GEN_TURBO_MIN_VRAM_GB="${AI_VIDEO_GEN_TURBO_MIN_VRAM_GB}" \
 AI_VIDEO_GEN_PERSISTENT_MODEL_CACHE_DIR="${PERSISTENT_MODEL_CACHE_DIR}" \
 AI_VIDEO_GEN_LTX_MODEL_ROOT="${LTX_MODEL_ROOT}" \
 AI_VIDEO_GEN_LONGCAT_BRANCH_RELEASE_FILE="${LONGCAT_RELEASE_FILE}" \
@@ -116,7 +130,7 @@ if [ "${AI_VIDEO_GEN_ENABLE_LONGCAT}" = "1" ]; then
   echo $! > "${ROOT_DIR}/.run/longcat-provision.pid"
 fi
 
-if [ "${AI_VIDEO_GEN_ENABLE_LTX}" = "1" ] && [ "${AI_VIDEO_GEN_ENABLE_LONGCAT}" = "1" ]; then
+if [ "${AI_VIDEO_GEN_ENABLE_LTX}" = "1" ] && [ "${AI_VIDEO_GEN_ENABLE_LONGCAT}" = "1" ] && [ "${AI_VIDEO_GEN_EXECUTION_PROFILE}" != "turbo" ]; then
   nohup env \
     "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/scripts/coordinate_packet_model_branches.py" \
     --longcat-status-file "${LONGCAT_STATUS_FILE}" \
@@ -149,6 +163,9 @@ COMFYUI_ROOT="${COMFY_ROOT}" \
 AI_VIDEO_GEN_PROVISIONING_STATUS="${STATUS_FILE}" \
 LONGCAT_PROVISIONING_STATUS="${LONGCAT_STATUS_FILE}" \
 AI_VIDEO_GEN_LONGCAT_BRANCH_RELEASE_FILE="${LONGCAT_RELEASE_FILE}" \
+AI_VIDEO_GEN_EXECUTION_PROFILE="${AI_VIDEO_GEN_EXECUTION_PROFILE}" \
+AI_VIDEO_GEN_TURBO_MAX_CONCURRENT_BRANCHES="${AI_VIDEO_GEN_TURBO_MAX_CONCURRENT_BRANCHES}" \
+AI_VIDEO_GEN_TURBO_MIN_VRAM_GB="${AI_VIDEO_GEN_TURBO_MIN_VRAM_GB}" \
 bash "${ROOT_DIR}/scripts/run_remote_server.sh" >/dev/null
 
 echo "Packet deploy started: API port ${PORT}; ComfyUI stays private on 18188."

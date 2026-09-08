@@ -33,6 +33,13 @@ def test_packet_deploy_serializes_mixed_model_branches_and_caps_downloads() -> N
     assert "--max-workers \"${MODEL_DOWNLOAD_CONCURRENCY}\"" in script
     assert "guard_packet_ltx_disk.sh" not in script
     assert "kill -STOP" not in script
+    assert 'AI_VIDEO_GEN_EXECUTION_PROFILE="${AI_VIDEO_GEN_EXECUTION_PROFILE:-standard}"' in script
+    assert '[ "${AI_VIDEO_GEN_EXECUTION_PROFILE}" != "turbo" ]' in script
+    assert '[ "${AI_VIDEO_GEN_EXECUTION_PROFILE}" = "turbo" ]' in script
+    assert (
+        '[ "${AI_VIDEO_GEN_ENABLE_LONGCAT}" = "1" ] '
+        '&& [ "${AI_VIDEO_GEN_EXECUTION_PROFILE}" != "turbo" ]'
+    ) in script
 
 
 def test_longcat_huggingface_downloads_are_limited_to_three_workers() -> None:
