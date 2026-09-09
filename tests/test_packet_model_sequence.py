@@ -42,6 +42,13 @@ def test_packet_deploy_serializes_mixed_model_branches_and_caps_downloads() -> N
     ) in script
 
 
+def test_packet_bootstrap_installs_python_headers_for_triton_jit() -> None:
+    script = (ROOT / "scripts" / "bootstrap_vast.sh").read_text(encoding="utf-8")
+
+    assert "build-essential python3.12-dev" in script
+    assert "build-essential python3-dev" in script
+
+
 def test_longcat_huggingface_downloads_are_limited_to_three_workers() -> None:
     script = (ROOT / "scripts" / "provision_longcat_avatar.sh").read_text(encoding="utf-8")
 

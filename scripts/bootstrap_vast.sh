@@ -167,6 +167,15 @@ ensure_apt_packages git
 PYTHON_BIN="$(resolve_python)"
 echo "Using Python interpreter: ${PYTHON_BIN} ($("${PYTHON_BIN}" -V 2>&1))"
 
+# Triton JIT-compiles a tiny CUDA driver extension on first real inference.
+# Minimal Packet images include gcc and Python itself but omit Python.h, which
+# otherwise makes every ComfyUI LTX prompt fail only after all weights loaded.
+if [ "${PYTHON_BIN}" = "/usr/bin/python3.12" ] || [ "${PYTHON_BIN}" = "python3.12" ]; then
+  ensure_apt_packages build-essential python3.12-dev
+else
+  ensure_apt_packages build-essential python3-dev
+fi
+
 if ! "${PYTHON_BIN}" -m ensurepip --version >/dev/null 2>&1; then
   # Ubuntu's minimal GPU images can provide Python 3.12 but omit ensurepip.
   # Checking only `python -m venv --help` does not catch that missing runtime
