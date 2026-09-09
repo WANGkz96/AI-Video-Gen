@@ -175,7 +175,7 @@ def test_ltx25_t2v_uploads_a_valid_placeholder_for_joint_workflow() -> None:
             return None
 
         def json(self) -> dict[str, str]:
-            return {"name": "placeholder.png", "subfolder": "", "type": "input"}
+            return {"name": "placeholder.jpg", "subfolder": "", "type": "input"}
 
     class Client:
         def __init__(self) -> None:
@@ -190,8 +190,8 @@ def test_ltx25_t2v_uploads_a_valid_placeholder_for_joint_workflow() -> None:
     uploaded = asyncio.run(adapter._upload_t2v_placeholder(client, request))
 
     filename, content, mime_type = client.kwargs["files"]["image"]
-    assert filename.endswith("_t2v_placeholder.png")
-    assert content.startswith(b"\x89PNG\r\n\x1a\n")
-    assert mime_type == "image/png"
-    assert uploaded["loadImageValue"] == "placeholder.png"
+    assert filename.endswith("_t2v_placeholder.jpg")
+    assert content.startswith(b"\xff\xd8\xff")
+    assert mime_type == "image/jpeg"
+    assert uploaded["loadImageValue"] == "placeholder.jpg"
     assert uploaded["t2vPlaceholder"] is True

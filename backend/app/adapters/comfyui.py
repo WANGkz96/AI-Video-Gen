@@ -22,8 +22,8 @@ from backend.app.models import AdapterInfo, GenerationArtifact, SegmentGeneratio
 from backend.app.services.provisioning import COMFY_LTX25_MODEL_NAMES, missing_comfy_ltx25_model_files
 
 
-_T2V_PLACEHOLDER_PNG = base64.b64decode(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+_T2V_PLACEHOLDER_JPEG = base64.b64decode(
+    "/9j/4AAQSkZJRgABAgAAAQABAAD//gAQTGF2YzYyLjE5LjEwMAD/2wBDAAgEBAQEBAUFBQUFBQYGBgYGBgYGBgYGBgYHBwcICAgHBwcGBgcHCAgICAkJCQgICAgJCQoKCgwMCwsODg4RERT/xABLAAEBAAAAAAAAAAAAAAAAAAAACAEBAAAAAAAAAAAAAAAAAAAAABABAAAAAAAAAAAAAAAAAAAAABEBAAAAAAAAAAAAAAAAAAAAAP/AABEIAEAAQAMBIgACEQADEQD/2gAMAwEAAhEDEQA/AJ/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB//9k="
 )
 
 
@@ -212,7 +212,7 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
             # The converted joint LTX 2.5 T2V/I2V graph still evaluates its
             # LoadImage dependency before the bypass selector.  Leaving that
             # node empty makes ComfyUI try to open its input directory.  Feed
-            # it a harmless transparent pixel while keeping bypass_i2v=true;
+            # it a harmless 64x64 RGB frame while keeping bypass_i2v=true;
             # the placeholder is evaluated but cannot condition the T2V path.
             uploaded_image = await self._upload_t2v_placeholder(client, request)
             image_wiring = self._wire_uploaded_image(prompt, uploaded_image["loadImageValue"])
@@ -300,12 +300,12 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
         request: SegmentGenerationRequest,
     ) -> dict[str, object]:
         filename = self._safe_filename(
-            f"aivg_{request.jobId}_{request.segmentId}_t2v_placeholder.png"
+            f"aivg_{request.jobId}_{request.segmentId}_t2v_placeholder.jpg"
         )
         response = await client.post(
             f"{self._api_url}/upload/image",
             data={"type": "input", "overwrite": "true"},
-            files={"image": (filename, _T2V_PLACEHOLDER_PNG, "image/png")},
+            files={"image": (filename, _T2V_PLACEHOLDER_JPEG, "image/jpeg")},
         )
         response.raise_for_status()
         payload = response.json()
