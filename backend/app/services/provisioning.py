@@ -9,6 +9,7 @@ import httpx
 
 from backend.app.config import Settings
 from backend.app.services.gpu_telemetry import read_gpu_telemetry
+from backend.app.services.storage_telemetry import read_storage_telemetry
 
 
 COMFY_LTX25_MODELS = [
@@ -317,6 +318,7 @@ def get_provisioning_status(settings: Settings) -> dict[str, Any]:
             "minimumVramGb": turbo_min_vram_gb,
         },
         "gpuTelemetry": gpu_telemetry,
+        "storageTelemetry": read_storage_telemetry(settings),
         "branches": {
             "comfyui-ltx25": ltx,
             "longcat-video-avatar": {

@@ -38,6 +38,7 @@ from backend.app.models import (
 from backend.app.services.gpu_telemetry import read_gpu_telemetry
 from backend.app.services.media import probe_video
 from backend.app.services.provisioning import get_provisioning_status
+from backend.app.services.storage_telemetry import read_storage_telemetry
 
 
 def utc_now() -> datetime:
@@ -180,6 +181,7 @@ class JobService:
             inputFile=input_path.relative_to(workspace_dir).as_posix(),
             executionProfile=execution_profile,
             gpuTelemetry=gpu_telemetry,
+            storageTelemetry=read_storage_telemetry(self._settings),
             branchState=branch_state,
         )
         runtime = JobRuntime(
@@ -817,13 +819,22 @@ class JobService:
         error: str | None = None,
     ) -> None:
         state = dict(runtime.snapshot.branchState)
+        previous = dict(state.get(backend) or {})
+        timestamp = utc_now().isoformat()
         state[backend] = {
+            **previous,
             "status": status,
-            "updatedAt": utc_now().isoformat(),
+            "updatedAt": timestamp,
+            **({"startedAt": previous.get("startedAt") or timestamp} if status == "running" else {}),
+            **({"finishedAt": timestamp} if status in {"completed", "failed"} else {}),
             **({"error": error} if error else {}),
         }
         runtime.snapshot.branchState = state
         runtime.snapshot.gpuTelemetry = await asyncio.to_thread(read_gpu_telemetry)
+        runtime.snapshot.storageTelemetry = await asyncio.to_thread(
+            read_storage_telemetry,
+            self._settings,
+        )
         runtime.snapshot.updatedAt = utc_now()
         self._write_snapshot(runtime)
         await self._broadcast_snapshot(runtime)

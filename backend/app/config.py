@@ -127,6 +127,8 @@ class Settings:
     turbo_max_concurrent_branches: int
     turbo_min_vram_gb: float
     persistent_model_cache_dir: Path | None
+    storage_profile: str
+    ephemeral_storage_gb: float | None
     ltx_model_root: Path
     longcat_branch_release_file: Path | None
     backend_ready_poll_sec: float
@@ -243,6 +245,15 @@ class Settings:
                 float(os.getenv("AI_VIDEO_GEN_TURBO_MIN_VRAM_GB", "160")),
             ),
             persistent_model_cache_dir=persistent_model_cache_dir,
+            storage_profile=(
+                "persistent"
+                if persistent_model_cache_dir
+                else "ephemeral"
+            ),
+            ephemeral_storage_gb=(
+                max(0.0, float(os.getenv("AI_VIDEO_GEN_EPHEMERAL_STORAGE_GB", "0")))
+                or None
+            ),
             ltx_model_root=ltx_model_root,
             longcat_branch_release_file=longcat_branch_release_file,
             backend_ready_poll_sec=max(

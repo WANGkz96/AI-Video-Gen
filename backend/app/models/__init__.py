@@ -244,6 +244,7 @@ class JobSnapshot(BaseSchema):
     error: str | None = None
     executionProfile: dict[str, Any] = Field(default_factory=dict)
     gpuTelemetry: dict[str, Any] = Field(default_factory=dict)
+    storageTelemetry: dict[str, Any] = Field(default_factory=dict)
     branchState: dict[str, Any] = Field(default_factory=dict)
     turboFallbackRecommended: bool = False
 
