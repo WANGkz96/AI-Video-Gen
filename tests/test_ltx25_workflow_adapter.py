@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+import asyncio
 
 from backend.app.adapters.comfyui import ComfyUiWorkflowAdapter
 from backend.app.services.provisioning import COMFY_LTX25_MODEL_NAMES
@@ -163,3 +164,34 @@ def test_ltx25_workflow_repairs_dangling_gemma_api_model_link() -> None:
     adapter._set_ltx25_model_files(prompt)
 
     assert prompt["6"]["inputs"]["ckpt_name"] == COMFY_LTX25_MODEL_NAMES["transformer"]
+
+
+def test_ltx25_t2v_uploads_a_valid_placeholder_for_joint_workflow() -> None:
+    adapter = object.__new__(ComfyUiWorkflowAdapter)
+    adapter._api_url = "http://comfy"
+
+    class Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, str]:
+            return {"name": "placeholder.png", "subfolder": "", "type": "input"}
+
+    class Client:
+        def __init__(self) -> None:
+            self.kwargs = None
+
+        async def post(self, _url: str, **kwargs):
+            self.kwargs = kwargs
+            return Response()
+
+    client = Client()
+    request = SimpleNamespace(jobId="job", segmentId="segment")
+    uploaded = asyncio.run(adapter._upload_t2v_placeholder(client, request))
+
+    filename, content, mime_type = client.kwargs["files"]["image"]
+    assert filename.endswith("_t2v_placeholder.png")
+    assert content.startswith(b"\x89PNG\r\n\x1a\n")
+    assert mime_type == "image/png"
+    assert uploaded["loadImageValue"] == "placeholder.png"
+    assert uploaded["t2vPlaceholder"] is True

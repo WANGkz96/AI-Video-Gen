@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import mimetypes
 import os
@@ -19,6 +20,11 @@ from backend.app.adapters.base import AdapterUnavailableError, BaseGeneratorAdap
 from backend.app.config import REPO_ROOT, Settings
 from backend.app.models import AdapterInfo, GenerationArtifact, SegmentGenerationRequest
 from backend.app.services.provisioning import COMFY_LTX25_MODEL_NAMES, missing_comfy_ltx25_model_files
+
+
+_T2V_PLACEHOLDER_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
 
 
 class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
@@ -198,6 +204,19 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
             assert request.imagePath is not None
             uploaded_image = await self._upload_image(client, request)
             image_wiring = self._wire_uploaded_image(prompt, uploaded_image["loadImageValue"])
+        elif any(
+            node.get("class_type") == "LoadImage"
+            and not str((node.get("inputs") or {}).get("image") or "").strip()
+            for node in prompt.values()
+        ):
+            # The converted joint LTX 2.5 T2V/I2V graph still evaluates its
+            # LoadImage dependency before the bypass selector.  Leaving that
+            # node empty makes ComfyUI try to open its input directory.  Feed
+            # it a harmless transparent pixel while keeping bypass_i2v=true;
+            # the placeholder is evaluated but cannot condition the T2V path.
+            uploaded_image = await self._upload_t2v_placeholder(client, request)
+            image_wiring = self._wire_uploaded_image(prompt, uploaded_image["loadImageValue"])
+            image_wiring["t2vPlaceholder"] = True
 
         debug = {
             "workflowPath": workflow_path.as_posix(),
@@ -273,6 +292,33 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
             "subfolder": subfolder,
             "type": payload.get("type"),
             "loadImageValue": load_image_value,
+        }
+
+    async def _upload_t2v_placeholder(
+        self,
+        client: httpx.AsyncClient,
+        request: SegmentGenerationRequest,
+    ) -> dict[str, object]:
+        filename = self._safe_filename(
+            f"aivg_{request.jobId}_{request.segmentId}_t2v_placeholder.png"
+        )
+        response = await client.post(
+            f"{self._api_url}/upload/image",
+            data={"type": "input", "overwrite": "true"},
+            files={"image": (filename, _T2V_PLACEHOLDER_PNG, "image/png")},
+        )
+        response.raise_for_status()
+        payload = response.json()
+        name = str(payload.get("name") or filename)
+        subfolder = str(payload.get("subfolder") or "")
+        load_image_value = f"{subfolder}/{name}" if subfolder else name
+        return {
+            "sourcePath": None,
+            "name": name,
+            "subfolder": subfolder,
+            "type": payload.get("type"),
+            "loadImageValue": load_image_value,
+            "t2vPlaceholder": True,
         }
 
     async def _queue_prompt(self, client: httpx.AsyncClient, prompt: dict[str, dict]) -> str:
