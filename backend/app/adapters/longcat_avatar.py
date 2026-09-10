@@ -45,7 +45,7 @@ class LongCatAvatarAdapter(BaseGeneratorAdapter):
         return AdapterInfo(
             key=self.key,
             label="LongCat Video Avatar 1.5",
-            description="Two-person image and separate-audio talking-avatar generation.",
+            description="Single-narrator or two-person talking-avatar generation from an image and speech.",
             status="ready" if available else "experimental",
             available=available,
             supportsBatch=True,
@@ -192,11 +192,14 @@ class LongCatAvatarAdapter(BaseGeneratorAdapter):
         generated_dir = run_dir / "generated"
         run_dir.mkdir(parents=True, exist_ok=True)
         generated_dir.mkdir(parents=True, exist_ok=True)
+        single = request.audioMode == "single"
+        if not single and request.speaker2Path is None:
+            raise ValueError("Multi-speaker LongCat requires two audio files")
         speaker_paths = {
             "person1": request.speaker1Path,
-            "person2": request.speaker2Path,
+            **({"person2": request.speaker2Path} if not single else {}),
         }
-        avatar_layout = self._normalize_avatar_layout(request.avatarLayout)
+        avatar_layout = {} if single else self._normalize_avatar_layout(request.avatarLayout)
         avatar_identity = self._normalize_avatar_identity(request.avatarIdentity)
         substituted_silent_tracks: list[str] = []
         for person, source_path in tuple(speaker_paths.items()):
@@ -224,6 +227,13 @@ class LongCatAvatarAdapter(BaseGeneratorAdapter):
             ]
             if item
         )
+        if single:
+            stable_prompt = " ".join([
+                request.prompt.strip(),
+                f"Character identity lock: {avatar_identity['person1']}.",
+                "Preserve exactly the one character, location and framing from the image. Natural single-person lip sync to the supplied audio.",
+                "Keep the face and mouth visible with restrained gestures. No other characters, cuts, text, subtitles, zoom or reframing.",
+            ])
         input_doc = {
             "prompt": stable_prompt,
             "prompt_schedule": [
@@ -231,13 +241,11 @@ class LongCatAvatarAdapter(BaseGeneratorAdapter):
                 for index in range(num_segments)
             ],
             "cond_image": request.imagePath.as_posix(),
-            "cond_audio": {
-                "person1": speaker_paths["person1"].as_posix(),
-                "person2": speaker_paths["person2"].as_posix(),
-            },
+            "cond_audio": {person: audio.as_posix() for person, audio in speaker_paths.items()},
+            "audio_mode": request.audioMode,
             "audio_type": "para",
             "avatar_layout": avatar_layout,
-            "avatar_identity": avatar_identity,
+            "avatar_identity": {"person1": avatar_identity["person1"]} if single else avatar_identity,
             "target_orientation": "portrait" if request.height > request.width else "landscape",
         }
         input_path = run_dir / "avatar_input.json"

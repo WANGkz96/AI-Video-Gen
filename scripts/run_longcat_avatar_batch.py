@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 import PIL.Image
+import librosa
 import numpy as np
 import soundfile as sf
 import torch
@@ -201,7 +202,7 @@ def _make_audio_embeddings(
     runtime: Runtime,
     input_data: dict[str, Any],
     num_segments: int,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None, str]:
+) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, str]:
     audio = input_data["cond_audio"]
     left_raw = audio.get("person1")
     right_raw = audio.get("person2")
@@ -214,6 +215,21 @@ def _make_audio_embeddings(
     right_temp = runtime.audio_temp_dir / f"{generate_random_uid()}_right_temp_vocal.wav"
     merge_path = f"/tmp/temp_speech_{generate_random_uid()}_{runtime.local_rank}_merge.wav"
     try:
+        if input_data.get("audio_mode") == "single":
+            if not left_raw or right_raw:
+                raise ValueError("Single-speaker mode requires exactly one audio track")
+            vocal = extract_vocal_from_speech(left_raw, left_temp, runtime.vocal_separator, runtime.audio_temp_dir)
+            speech, sr = librosa.load(vocal, sr=16_000)
+            padding = max(0, math.ceil(generate_duration * sr) - len(speech))
+            speech = np.pad(speech, (0, padding))
+            sf.write(merge_path, speech, sr)
+            embedding = runtime.pipe.get_audio_embedding(
+                speech, fps=runtime.save_fps * runtime.audio_stride,
+                device=runtime.local_rank, sample_rate=sr, model_type="avatar-v1.5",
+            )
+            if torch.isnan(embedding).any():
+                raise ValueError("LongCat produced a NaN audio embedding")
+            return embedding, None, None, merge_path
         left_vocal = extract_vocal_from_speech(left_raw, left_temp, runtime.vocal_separator, runtime.audio_temp_dir)
         right_vocal = extract_vocal_from_speech(right_raw, right_temp, runtime.vocal_separator, runtime.audio_temp_dir)
         left_speech, right_speech, merged = audio_prepare_multi(
@@ -252,7 +268,7 @@ def _make_audio_embeddings(
 def _window_audio_embeddings(
     runtime: Runtime,
     left_full: torch.Tensor,
-    right_full: torch.Tensor,
+    right_full: torch.Tensor | None,
     start_idx: int,
 ) -> torch.Tensor:
     indices = torch.arange(5) - 2
@@ -260,11 +276,15 @@ def _window_audio_embeddings(
     center = torch.arange(start_idx, end_idx, runtime.audio_stride).unsqueeze(1) + indices.unsqueeze(0)
     center = torch.clamp(center, min=0, max=left_full.shape[0] - 1)
     left = left_full[center][None, ...].to(runtime.local_rank)
+    if right_full is None:
+        return left
     right = right_full[center][None, ...].to(runtime.local_rank)
     return torch.cat([left, right])
 
 
-def _target_masks(image: PIL.Image.Image, input_data: dict[str, Any], device: int) -> torch.Tensor:
+def _target_masks(image: PIL.Image.Image, input_data: dict[str, Any], device: int) -> torch.Tensor | None:
+    if input_data.get("audio_mode") == "single":
+        return None
     src_width, src_height = image.size
     bbox = input_data.get("bbox", {})
     person1_bbox = bbox.get("person1")

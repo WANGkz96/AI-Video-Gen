@@ -1738,7 +1738,7 @@ class JobService:
             raise ValueError(f"Dialogue scene {scene.sceneId} has no first-frame image.")
         image_path = self._resolve_input_file(runtime, image_file)
         speaker1_path = self._resolve_input_file(runtime, scene.audio.speaker1File)
-        speaker2_path = self._resolve_input_file(runtime, scene.audio.speaker2File)
+        speaker2_path = self._resolve_input_file(runtime, scene.audio.speaker2File) if scene.audio.mode == "multi" else None
         output_path = (
             runtime.workspace_dir
             / "videos"
@@ -1762,6 +1762,7 @@ class JobService:
             imagePath=image_path,
             speaker1Path=speaker1_path,
             speaker2Path=speaker2_path,
+            audioMode=scene.audio.mode,
             width=width,
             height=height,
             fps=25,

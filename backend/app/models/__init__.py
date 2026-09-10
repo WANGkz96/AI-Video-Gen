@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class BaseSchema(BaseModel):
@@ -109,9 +109,19 @@ class DialogueSceneGeneration(BaseSchema):
 
 
 class DialogueSceneAudio(BaseSchema):
-    mode: str = "multi"
+    mode: Literal["single", "multi"] = "multi"
     speaker1File: str
-    speaker2File: str
+    speaker2File: str | None = None
+
+    @model_validator(mode="after")
+    def validate_audio_mode(self):
+        if not self.speaker1File.strip():
+            raise ValueError("A narrator audio file is required")
+        if self.mode == "multi" and not (self.speaker2File or "").strip():
+            raise ValueError("Multi-speaker scenes require speaker2File")
+        if self.mode == "single" and self.speaker2File:
+            raise ValueError("Single-speaker scenes accept only one audio file")
+        return self
 
 
 class ManifestDialogueScene(BaseSchema):
@@ -303,7 +313,8 @@ class DialogueSceneGenerationRequest(BaseSchema):
     prompt: str
     imagePath: Path
     speaker1Path: Path
-    speaker2Path: Path
+    speaker2Path: Path | None = None
+    audioMode: Literal["single", "multi"] = "multi"
     width: int = 720
     height: int = 1280
     fps: float = 25.0
