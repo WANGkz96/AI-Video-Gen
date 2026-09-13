@@ -203,6 +203,14 @@ class LongCatAvatarAdapter(BaseGeneratorAdapter):
                 parsed = {str(item.get("sceneId")): item for item in result_doc.get("scenes", [])}
 
             fatal_cuda = any(marker in attempt_log.lower() for marker in retryable_markers)
+            runtime_load_cuda_failure = (
+                fatal_cuda
+                and not any(
+                    isinstance(result, dict) and result.get("status") == "completed"
+                    for result in parsed.values()
+                )
+                and ("_load_runtime" in attempt_log or "pipe.to" in attempt_log)
+            )
             next_pending: list[dict[str, object]] = []
             for item in pending:
                 scene_id = item["request"].sceneId
@@ -213,7 +221,10 @@ class LongCatAvatarAdapter(BaseGeneratorAdapter):
                     continue
                 error_text = str((result or {}).get("error") or "") if isinstance(result, dict) else ""
                 retryable = fatal_cuda or any(marker in error_text.lower() for marker in retryable_markers)
-                if retryable and attempt < max_attempts:
+                # A clean child process cannot repair a GPU/runtime that fails
+                # while uploading the model itself. Escalate immediately to
+                # the outer Packet retry, which provisions a fresh instance.
+                if retryable and not runtime_load_cuda_failure and attempt < max_attempts:
                     next_pending.append(item)
                     continue
                 by_scene[scene_id] = result if isinstance(result, dict) else {
