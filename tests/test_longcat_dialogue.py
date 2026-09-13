@@ -211,11 +211,11 @@ def test_longcat_batch_runner_is_provisioned_and_keeps_model_loading_outside_sce
     assert "CUDA context is corrupted; aborting this attempt" in runner
 
 
-def test_longcat_adapter_retries_cuda_context_failures_in_a_fresh_process() -> None:
+def test_longcat_adapter_escalates_cuda_failures_to_packet_by_default() -> None:
     root = Path(__file__).resolve().parents[1]
     adapter = (root / "backend" / "app" / "adapters" / "longcat_avatar.py").read_text(encoding="utf-8")
 
-    assert 'LONGCAT_CUDA_MAX_ATTEMPTS", "3"' in adapter
+    assert 'LONGCAT_CUDA_MAX_ATTEMPTS", "1"' in adapter
     assert 'env["CUDA_LAUNCH_BLOCKING"] = "1"' in adapter
     assert 'env["PYTORCH_NO_CUDA_MEMORY_CACHING"] = "1"' in adapter
     assert 'attempt_dir = batch_dir / f"attempt-{attempt:02d}"' in adapter
