@@ -152,11 +152,7 @@ import torch.nn as nn
     attention = Path("attention.py")
     patched = patch_avatar_attention_source(pristine, attention)
 
-    assert patch_avatar_attention_source(patched, attention) == patched
-    assert "import torch.nn.functional as F" in patched
-    assert patched.count("F.scaled_dot_product_attention") == 2
-    assert patched.count("get_device_capability()[0] == 12") == 2
-    assert patched.count("from flash_attn import flash_attn_func") == 2
+    assert patched == pristine
 
 
 def test_longcat_runtime_uses_blocking_model_transfers_on_blackwell() -> None:

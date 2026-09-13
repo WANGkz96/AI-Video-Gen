@@ -92,6 +92,13 @@ def patch_avatar_attention_source(source: str, attention: Path) -> str:
     rendering a real Avatar scene.  PyTorch 2.7.1+cu128's native SDPA path is
     stable on that GPU and retains the regular flash-attn path elsewhere.
     """
+    # Disabled: successful RTX runs predate this global SM120 substitution,
+    # while production runs with it became dramatically slower and still hit
+    # illegal-memory-access failures. Keep upstream attention untouched; GPU
+    # placement failures are isolated by the outer Packet retry instead.
+    return source
+
+    # Historical transformation retained temporarily for deployment audits.
     if BLACKWELL_SDPA_MARKER in source:
         return source
 
