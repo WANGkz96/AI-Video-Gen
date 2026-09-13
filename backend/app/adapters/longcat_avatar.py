@@ -17,6 +17,10 @@ from backend.app.models import (
 )
 
 
+class LongCatRuntimeFatalError(RuntimeError):
+    """The GPU runtime cannot load LongCat and must not be retried per video."""
+
+
 class LongCatAvatarAdapter(BaseGeneratorAdapter):
     key = "longcat-video-avatar"
 
@@ -236,6 +240,18 @@ class LongCatAvatarAdapter(BaseGeneratorAdapter):
         )
         log_path = batch_dir / "longcat-batch.log"
         log_path.write_text(log_text, encoding="utf-8")
+        completed_scene_ids = {
+            scene_id
+            for scene_id, result in by_scene.items()
+            if isinstance(result, dict) and result.get("status") == "completed"
+        }
+        if not completed_scene_ids and any(marker in log_text.lower() for marker in retryable_markers):
+            raise LongCatRuntimeFatalError(
+                "LongCat CUDA runtime failed before producing any scene after "
+                f"{len(attempt_logs)} clean-process attempts; aborting this GPU branch so "
+                "the outer Packet retry can move the missing scenes to a fresh instance. "
+                f"Diagnostics: {log_path.as_posix()}"
+            )
         artifacts: dict[str, GenerationArtifact] = {}
         errors: dict[str, str] = {}
         for item in prepared:

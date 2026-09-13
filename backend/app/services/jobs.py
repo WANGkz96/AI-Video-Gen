@@ -14,7 +14,7 @@ from typing import Any
 from backend.app.adapters.base import AdapterUnavailableError, BaseGeneratorAdapter
 from backend.app.adapters.comfyui import ComfyUiWorkflowAdapter
 from backend.app.adapters.diffusers_video import DiffusersVideoAdapter
-from backend.app.adapters.longcat_avatar import LongCatAvatarAdapter
+from backend.app.adapters.longcat_avatar import LongCatAvatarAdapter, LongCatRuntimeFatalError
 from backend.app.adapters.mock_gen import MockGenAdapter
 from backend.app.adapters.planned import PlannedAdapter
 from backend.app.adapters.registry import build_real_model_registry
@@ -855,7 +855,17 @@ class JobService:
                 f"Backend '{backend}' is ready; starting its generation branch.",
             )
             self._release_adapters(except_backend=backend)
-            await self._process_generation_branch(runtime, backend, work_items)
+            try:
+                await self._process_generation_branch(runtime, backend, work_items)
+            except LongCatRuntimeFatalError as exc:
+                # A poisoned/unsupported CUDA environment will fail identically
+                # for every video's LongCat batch. Stop this branch, but let an
+                # independent LTX branch finish so its artifacts survive the
+                # outer Packet retry on a fresh instance.
+                await self._set_branch_state(runtime, backend, "failed", error=str(exc))
+                await self._log(runtime, "error", f"Generation branch '{backend}' aborted: {exc}")
+                pending_backends.remove(backend)
+                continue
             pending_backends.remove(backend)
             await self._set_branch_state(runtime, backend, "completed")
             await self._log(runtime, "info", f"Generation branch '{backend}' completed.")
@@ -1279,6 +1289,8 @@ class JobService:
         except Exception as exc:
             for scene, _request, scene_entry in prepared:
                 await self._record_dialogue_scene_failure(runtime, scene_entry, scene.sceneId, exc)
+            if isinstance(exc, LongCatRuntimeFatalError):
+                raise
             return
 
         for scene, request, scene_entry in prepared:
