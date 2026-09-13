@@ -115,42 +115,127 @@ class LongCatAvatarAdapter(BaseGeneratorAdapter):
             raise AdapterUnavailableError(
                 "LongCat batch runner is unavailable. Re-run LongCat provisioning for this instance."
             )
-        command = [
-            self._torchrun.as_posix(),
-            "--master_port",
-            str(29600 + (requests[0].sceneIndex % 300)),
-            "--nproc_per_node=1",
-            runner.as_posix(),
-            "--batch_manifest",
-            batch_manifest.as_posix(),
-            "--result_manifest",
-            result_manifest.as_posix(),
-            "--resolution",
-            "480p",
-            "--checkpoint_dir",
-            self._checkpoint.as_posix(),
-            "--use_distill",
-            "--use_int8",
-        ]
-        env = os.environ.copy()
-        env.setdefault("PYTHONUNBUFFERED", "1")
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            cwd=self._root,
-            env=env,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
+        try:
+            max_attempts = max(1, min(5, int(os.getenv("LONGCAT_CUDA_MAX_ATTEMPTS", "3"))))
+        except ValueError:
+            max_attempts = 3
+
+        pending = list(prepared)
+        by_scene: dict[str, dict[str, object]] = {}
+        attempt_logs: list[str] = []
+        attempt_results: list[str] = []
+        process_return_codes: dict[str, int | None] = {}
+        retryable_markers = (
+            "illegal memory access",
+            "device-side assert",
+            "unspecified launch failure",
         )
-        stdout, _ = await process.communicate()
-        log_text = stdout.decode("utf-8", errors="replace")
+
+        for attempt in range(1, max_attempts + 1):
+            attempt_dir = batch_dir / f"attempt-{attempt:02d}"
+            attempt_dir.mkdir(parents=True, exist_ok=True)
+            attempt_manifest = attempt_dir / "batch-input.json"
+            attempt_result = attempt_dir / "batch-result.json"
+            attempt_manifest.write_text(
+                json.dumps(
+                    {
+                        "scenes": [
+                            {
+                                "sceneId": item["request"].sceneId,
+                                "inputJson": item["inputPath"].as_posix(),
+                                "outputDir": item["generatedDir"].as_posix(),
+                                "numSegments": item["numSegments"],
+                            }
+                            for item in pending
+                        ]
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            command = [
+                self._torchrun.as_posix(),
+                "--master_port",
+                str(29600 + ((requests[0].sceneIndex + attempt - 1) % 300)),
+                "--nproc_per_node=1",
+                runner.as_posix(),
+                "--batch_manifest",
+                attempt_manifest.as_posix(),
+                "--result_manifest",
+                attempt_result.as_posix(),
+                "--resolution",
+                "480p",
+                "--checkpoint_dir",
+                self._checkpoint.as_posix(),
+                "--use_distill",
+                "--use_int8",
+            ]
+            env = os.environ.copy()
+            env.setdefault("PYTHONUNBUFFERED", "1")
+            if attempt > 1:
+                # Synchronize CUDA calls so a retry fails at the real kernel,
+                # and avoid reusing allocator state implicated in intermittent
+                # SM120 illegal-address failures.
+                env["CUDA_LAUNCH_BLOCKING"] = "1"
+                env["PYTORCH_NO_CUDA_MEMORY_CACHING"] = "1"
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                cwd=self._root,
+                env=env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            stdout, _ = await process.communicate()
+            attempt_log = stdout.decode("utf-8", errors="replace")
+            attempt_log_path = attempt_dir / "longcat-batch.log"
+            attempt_log_path.write_text(attempt_log, encoding="utf-8")
+            attempt_logs.append(attempt_log_path.as_posix())
+            attempt_results.append(attempt_result.as_posix())
+
+            parsed: dict[str, object] = {}
+            if attempt_result.is_file():
+                result_doc = json.loads(attempt_result.read_text(encoding="utf-8"))
+                parsed = {str(item.get("sceneId")): item for item in result_doc.get("scenes", [])}
+
+            fatal_cuda = any(marker in attempt_log.lower() for marker in retryable_markers)
+            next_pending: list[dict[str, object]] = []
+            for item in pending:
+                scene_id = item["request"].sceneId
+                result = parsed.get(scene_id)
+                process_return_codes[scene_id] = process.returncode
+                if isinstance(result, dict) and result.get("status") == "completed":
+                    by_scene[scene_id] = result
+                    continue
+                error_text = str((result or {}).get("error") or "") if isinstance(result, dict) else ""
+                retryable = fatal_cuda or any(marker in error_text.lower() for marker in retryable_markers)
+                if retryable and attempt < max_attempts:
+                    next_pending.append(item)
+                    continue
+                by_scene[scene_id] = result if isinstance(result, dict) else {
+                    "sceneId": scene_id,
+                    "status": "failed",
+                    "error": (
+                        error_text
+                        or f"LongCat attempt exited with code {process.returncode} without a scene result."
+                    ),
+                }
+            pending = next_pending
+            if not pending:
+                break
+
+        # Preserve compatibility paths for diagnostics while retaining every
+        # immutable attempt under its own directory.
+        result_manifest.write_text(
+            json.dumps({"scenes": list(by_scene.values())}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        log_text = "\n\n".join(
+            f"===== attempt {index} =====\n{Path(path).read_text(encoding='utf-8')}"
+            for index, path in enumerate(attempt_logs, start=1)
+        )
         log_path = batch_dir / "longcat-batch.log"
         log_path.write_text(log_text, encoding="utf-8")
-        if not result_manifest.is_file():
-            raise RuntimeError(
-                f"LongCat batch exited with code {process.returncode} without a result manifest: {log_text[-6000:]}"
-            )
-        results = json.loads(result_manifest.read_text(encoding="utf-8"))
-        by_scene = {str(item.get("sceneId")): item for item in results.get("scenes", [])}
         artifacts: dict[str, GenerationArtifact] = {}
         errors: dict[str, str] = {}
         for item in prepared:
@@ -179,8 +264,10 @@ class LongCatAvatarAdapter(BaseGeneratorAdapter):
                     "durationSec": request.durationSec,
                     "fps": 25,
                     "substitutedSilentTracks": item["substitutedSilentTracks"],
-                    "processReturnCode": process.returncode,
-                    "processReturnedNonZeroAfterResults": process.returncode != 0,
+                    "attemptLogs": attempt_logs,
+                    "attemptResults": attempt_results,
+                    "processReturnCode": process_return_codes.get(request.sceneId),
+                    "processReturnedNonZeroAfterResults": process_return_codes.get(request.sceneId) != 0,
                 },
             )
         return artifacts, errors

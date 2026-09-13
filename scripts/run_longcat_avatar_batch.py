@@ -98,6 +98,19 @@ def _release_scene_memory() -> None:
     torch.cuda.ipc_collect()
 
 
+def _cuda_context_is_corrupted(exc: BaseException) -> bool:
+    """CUDA illegal-address/assert failures poison the whole process context."""
+    message = str(exc).lower()
+    return any(
+        marker in message
+        for marker in (
+            "illegal memory access",
+            "device-side assert",
+            "unspecified launch failure",
+        )
+    )
+
+
 def _load_runtime(args: argparse.Namespace) -> Runtime:
     if torch.cuda.is_available() and torch.cuda.get_device_capability() == (12, 0):
         # Matches the tested Blackwell workaround in patch_longcat_runtime.py.
@@ -448,6 +461,12 @@ def main() -> None:
             except Exception as exc:  # preserve healthy scenes in a partially bad batch
                 results.append({"sceneId": scene_id, "status": "failed", "error": str(exc), "traceback": traceback.format_exc()})
                 print(f"[BATCH] Failed scene {index}/{len(scenes)}: {scene_id}: {exc}", flush=True)
+                # An illegal address leaves every subsequent CUDA call in this
+                # process invalid. Stop immediately so the adapter can retry
+                # this and the untouched scenes in a fresh CUDA process.
+                if _cuda_context_is_corrupted(exc):
+                    print("[BATCH] CUDA context is corrupted; aborting this attempt for a clean-process retry.", flush=True)
+                    break
         result_path.parent.mkdir(parents=True, exist_ok=True)
         result_path.write_text(json.dumps({"scenes": results}, ensure_ascii=False, indent=2), encoding="utf-8")
         if any(item["status"] == "failed" for item in results):
