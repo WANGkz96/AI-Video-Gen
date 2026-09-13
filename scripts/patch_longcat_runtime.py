@@ -5,6 +5,7 @@ from pathlib import Path
 
 
 BLACKWELL_SDPA_MARKER = "AI-Video-Gen Blackwell SDPA fallback"
+BLACKWELL_BLOCKING_TRANSFER_MARKER = "AI-Video-Gen blocking CUDA transfer"
 
 
 def patch_source(source: str, runner: Path) -> str:
@@ -182,6 +183,26 @@ def patch_avatar_attention_source(source: str, attention: Path) -> str:
     return source.replace(cross_attention_branch, cross_attention_replacement, 1)
 
 
+def patch_avatar_pipeline_source(source: str, pipeline: Path) -> str:
+    """Avoid intermittent SM120 corruption during asynchronous model upload."""
+    if BLACKWELL_BLOCKING_TRANSFER_MARKER in source:
+        return source
+    anchor = "        self.device = device\n"
+    replacement = (
+        "        self.device = device\n"
+        "        # AI-Video-Gen blocking CUDA transfer: Packet Dynamic SM120 can\n"
+        "        # corrupt the CUDA context during concurrent non-blocking uploads.\n"
+        "        non_blocking = not (torch.cuda.is_available() and torch.cuda.get_device_capability()[0] == 12)\n"
+    )
+    if anchor not in source:
+        raise RuntimeError(f"Cannot find pipeline device-transfer anchor in {pipeline}")
+    source = source.replace(anchor, replacement, 1)
+    transfer_count = source.count(".to(device, non_blocking=True)")
+    if transfer_count < 3:
+        raise RuntimeError(f"Cannot find Avatar asynchronous transfers in {pipeline}")
+    return source.replace(".to(device, non_blocking=True)", ".to(device, non_blocking=non_blocking)")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", required=True)
@@ -195,6 +216,12 @@ def main() -> None:
     attention_source = attention.read_text(encoding="utf-8")
     attention.write_text(
         patch_avatar_attention_source(attention_source, attention),
+        encoding="utf-8",
+    )
+    pipeline = repo / "longcat_video" / "pipeline_longcat_video_avatar.py"
+    pipeline_source = pipeline.read_text(encoding="utf-8")
+    pipeline.write_text(
+        patch_avatar_pipeline_source(pipeline_source, pipeline),
         encoding="utf-8",
     )
     print(f"Patched LongCat runtime: {runner}")

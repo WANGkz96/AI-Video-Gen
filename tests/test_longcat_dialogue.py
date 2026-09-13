@@ -7,7 +7,11 @@ import httpx
 from backend.app.adapters.comfyui import ComfyUiWorkflowAdapter
 from backend.app.adapters.longcat_avatar import LongCatAvatarAdapter
 from backend.app.models import BatchExport
-from scripts.patch_longcat_runtime import patch_avatar_attention_source, patch_source
+from scripts.patch_longcat_runtime import (
+    patch_avatar_attention_source,
+    patch_avatar_pipeline_source,
+    patch_source,
+)
 
 
 def _write_pcm_wav(path: Path, samples: list[int], sample_rate: int = 24_000) -> None:
@@ -153,6 +157,23 @@ import torch.nn as nn
     assert patched.count("F.scaled_dot_product_attention") == 2
     assert patched.count("get_device_capability()[0] == 12") == 2
     assert patched.count("from flash_attn import flash_attn_func") == 2
+
+
+def test_longcat_runtime_uses_blocking_model_transfers_on_blackwell() -> None:
+    pristine = """    def to(self, device):
+        self.device = device
+        self.dit = self.dit.to(device, non_blocking=True)
+        lora.to(device, non_blocking=True)
+        self.text_encoder = self.text_encoder.to(device, non_blocking=True)
+        self.vae = self.vae.to(device, non_blocking=True)
+        return self
+"""
+    pipeline = Path("pipeline_longcat_video_avatar.py")
+    patched = patch_avatar_pipeline_source(pristine, pipeline)
+
+    assert patch_avatar_pipeline_source(patched, pipeline) == patched
+    assert "get_device_capability()[0] == 12" in patched
+    assert patched.count("non_blocking=non_blocking") == 4
 
 
 def test_longcat_adapter_makes_fully_silent_track_separator_compatible(tmp_path: Path) -> None:
