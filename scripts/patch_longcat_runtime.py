@@ -191,23 +191,8 @@ def patch_avatar_attention_source(source: str, attention: Path) -> str:
 
 
 def patch_avatar_pipeline_source(source: str, pipeline: Path) -> str:
-    """Avoid intermittent SM120 corruption during asynchronous model upload."""
-    if BLACKWELL_BLOCKING_TRANSFER_MARKER in source:
-        return source
-    anchor = "        self.device = device\n"
-    replacement = (
-        "        self.device = device\n"
-        "        # AI-Video-Gen blocking CUDA transfer: Packet Dynamic SM120 can\n"
-        "        # corrupt the CUDA context during concurrent non-blocking uploads.\n"
-        "        non_blocking = not (torch.cuda.is_available() and torch.cuda.get_device_capability()[0] == 12)\n"
-    )
-    if anchor not in source:
-        raise RuntimeError(f"Cannot find pipeline device-transfer anchor in {pipeline}")
-    source = source.replace(anchor, replacement, 1)
-    transfer_count = source.count(".to(device, non_blocking=True)")
-    if transfer_count < 3:
-        raise RuntimeError(f"Cannot find Avatar asynchronous transfers in {pipeline}")
-    return source.replace(".to(device, non_blocking=True)", ".to(device, non_blocking=non_blocking)")
+    """Keep the pinned upstream component-transfer policy unchanged."""
+    return source
 
 
 def main() -> None:

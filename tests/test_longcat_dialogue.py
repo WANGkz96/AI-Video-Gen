@@ -155,7 +155,7 @@ import torch.nn as nn
     assert patched == pristine
 
 
-def test_longcat_runtime_uses_blocking_model_transfers_on_blackwell() -> None:
+def test_longcat_runtime_keeps_upstream_model_transfers_on_rtx() -> None:
     pristine = """    def to(self, device):
         self.device = device
         self.dit = self.dit.to(device, non_blocking=True)
@@ -168,8 +168,8 @@ def test_longcat_runtime_uses_blocking_model_transfers_on_blackwell() -> None:
     patched = patch_avatar_pipeline_source(pristine, pipeline)
 
     assert patch_avatar_pipeline_source(patched, pipeline) == patched
-    assert "get_device_capability()[0] == 12" in patched
-    assert patched.count("non_blocking=non_blocking") == 4
+    assert patched == pristine
+    assert patched.count("non_blocking=True") == 4
 
 
 def test_longcat_adapter_makes_fully_silent_track_separator_compatible(tmp_path: Path) -> None:
