@@ -120,9 +120,9 @@ class LongCatAvatarAdapter(BaseGeneratorAdapter):
                 "LongCat batch runner is unavailable. Re-run LongCat provisioning for this instance."
             )
         try:
-            max_attempts = max(1, min(5, int(os.getenv("LONGCAT_CUDA_MAX_ATTEMPTS", "3"))))
+            max_attempts = max(1, min(5, int(os.getenv("LONGCAT_CUDA_MAX_ATTEMPTS", "1"))))
         except ValueError:
-            max_attempts = 3
+            max_attempts = 1
 
         pending = list(prepared)
         by_scene: dict[str, dict[str, object]] = {}

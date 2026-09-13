@@ -865,6 +865,22 @@ class JobService:
                 await self._set_branch_state(runtime, backend, "failed", error=str(exc))
                 await self._log(runtime, "error", f"Generation branch '{backend}' aborted: {exc}")
                 pending_backends.remove(backend)
+                if (
+                    backend == LongCatAvatarAdapter.key
+                    and ComfyUiWorkflowAdapter.key in pending_backends
+                    and self._settings.release_longcat_weights_after_branch
+                ):
+                    released_path, was_released = await asyncio.to_thread(self._release_longcat_weights)
+                    release_signal = await asyncio.to_thread(self._signal_longcat_branch_release)
+                    await self._log(
+                        runtime,
+                        "warning",
+                        (
+                            f"LongCat failed; {'released' if was_released else 'retained'} weights at "
+                            f"{released_path} and opened the pending LTX branch"
+                            + (f" via {release_signal}." if release_signal else ".")
+                        ),
+                    )
                 continue
             pending_backends.remove(backend)
             await self._set_branch_state(runtime, backend, "completed")
