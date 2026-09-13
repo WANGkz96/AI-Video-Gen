@@ -86,6 +86,17 @@ def _parse_execution_profile(value: str | None) -> str:
     return "turbo" if str(value or "").strip().lower() == "turbo" else "standard"
 
 
+def _parse_optional_nonnegative_float(value: str | None) -> float | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = float(text)
+    except ValueError:
+        return None
+    return max(0.0, parsed) or None
+
+
 @dataclass(slots=True)
 class Settings:
     port: int
@@ -251,8 +262,9 @@ class Settings:
                 else "ephemeral"
             ),
             ephemeral_storage_gb=(
-                max(0.0, float(os.getenv("AI_VIDEO_GEN_EPHEMERAL_STORAGE_GB", "0")))
-                or None
+                _parse_optional_nonnegative_float(
+                    os.getenv("AI_VIDEO_GEN_EPHEMERAL_STORAGE_GB")
+                )
             ),
             ltx_model_root=ltx_model_root,
             longcat_branch_release_file=longcat_branch_release_file,

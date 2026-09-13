@@ -15,6 +15,16 @@ def test_auth_required_without_token_fails_fast(monkeypatch):
         Settings.from_env()
 
 
+def test_persistent_storage_accepts_empty_ephemeral_capacity(monkeypatch):
+    monkeypatch.setenv("AI_VIDEO_GEN_PERSISTENT_MODEL_CACHE_DIR", "/tmp/model-cache")
+    monkeypatch.setenv("AI_VIDEO_GEN_EPHEMERAL_STORAGE_GB", "")
+
+    settings = Settings.from_env()
+
+    assert settings.storage_profile == "persistent"
+    assert settings.ephemeral_storage_gb is None
+
+
 def load_main(monkeypatch, *, auth_required: bool, token: str = "test-token"):
     monkeypatch.setenv("AI_VIDEO_GEN_AUTH_REQUIRED", "1" if auth_required else "0")
     monkeypatch.setenv("AI_VIDEO_GEN_API_TOKEN", token)
