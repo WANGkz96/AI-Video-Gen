@@ -1834,6 +1834,7 @@ class JobService:
                 1280,
             )
         )
+        pipeline_width, pipeline_height = width, height
         if width > height:
             width, height = self._settings.landscape_resolution
         elif height > width:
@@ -1845,6 +1846,8 @@ class JobService:
                 backend_params.update(params)
         if job_backend_params:
             backend_params.update(job_backend_params)
+        backend_params["pipelineWidth"] = pipeline_width
+        backend_params["pipelineHeight"] = pipeline_height
         fps = self._resolve_generation_fps(backend_params)
         return width, height, fps, backend_params
 

@@ -200,13 +200,13 @@ class Settings:
             comfyui_t2v_workflow=Path(
                 os.getenv(
                     "COMFYUI_T2V_WORKFLOW",
-                    "/workspace/ComfyUI/blueprints/LTX-2.5_T2V_I2V_Single_Stage_Distilled.json",
+                    "/workspace/ComfyUI/blueprints/video_ltx2_5_t2v.json",
                 )
             ).resolve(),
             comfyui_i2v_workflow=Path(
                 os.getenv(
                     "COMFYUI_I2V_WORKFLOW",
-                    "/workspace/ComfyUI/blueprints/LTX-2.5_T2V_I2V_Single_Stage_Distilled.json",
+                    "/workspace/ComfyUI/blueprints/video_ltx2_5_i2v.json",
                 )
             ).resolve(),
             comfyui_output_prefix=os.getenv("COMFYUI_OUTPUT_PREFIX", "video/AI_Video_Gen"),

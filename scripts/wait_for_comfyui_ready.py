@@ -19,11 +19,11 @@ def main() -> None:
     workflow_paths = [
         env_path(
             "COMFYUI_T2V_WORKFLOW",
-            "/workspace/ComfyUI/blueprints/LTX-2.5_T2V_I2V_Single_Stage_Distilled.json",
+            "/workspace/ComfyUI/blueprints/video_ltx2_5_t2v.json",
         ),
         env_path(
             "COMFYUI_I2V_WORKFLOW",
-            "/workspace/ComfyUI/blueprints/LTX-2.5_T2V_I2V_Single_Stage_Distilled.json",
+            "/workspace/ComfyUI/blueprints/video_ltx2_5_i2v.json",
         ),
     ]
     deadline = time.monotonic() + timeout_sec
@@ -50,6 +50,20 @@ def main() -> None:
                     if not isinstance(converted, dict) or not converted:
                         raise RuntimeError(
                             f"Unexpected /workflow/convert response for {workflow_path}"
+                        )
+                    node_types = {
+                        node.get("class_type")
+                        for node in converted.values()
+                        if isinstance(node, dict)
+                    }
+                    required = {"ResolutionSelector", "LatentUpscaleModelLoader", "SaveVideo"}
+                    if workflow_path == workflow_paths[1]:
+                        required.add("LoadImage")
+                    missing_nodes = required - node_types
+                    if missing_nodes:
+                        raise RuntimeError(
+                            f"Converted workflow {workflow_path} is missing nodes: "
+                            + ", ".join(sorted(missing_nodes))
                         )
 
             print(f"[ready] ComfyUI API and workflow converter are ready at {api_url}")

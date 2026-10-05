@@ -7,13 +7,15 @@ set -euo pipefail
 COMFY_ROOT="${COMFYUI_ROOT:-/workspace/ComfyUI}"
 COMFY_PYTHON="${COMFY_PYTHON:-python3}"
 COMFY_PORT="${COMFYUI_PORT:-18188}"
-COMFY_REF="${COMFYUI_REF:-12d5279438bfefc058a269eae805ceab6047777f}"
-LTX_NODE_REF="${COMFYUI_LTXVIDEO_REF:-15d09abb5a187a8dcaea2fc31fe51ee96e6c9d0d}"
+COMFY_REF="${COMFYUI_REF:-5c460d8172fe30761ff67c0df3d5643bb74e0d70}"
+LTX_NODE_REF="${COMFYUI_LTXVIDEO_REF:-3bf3ca62595f1764c47d01c35c8e5dfe47e1a88f}"
 CONVERTER_REF="${COMFYUI_CONVERTER_REF:-bc8538278f82053b3ca10a44d62d02596f8e1a37}"
+WORKFLOW_TEMPLATES_REF="${COMFYUI_WORKFLOW_TEMPLATES_REF:-0e5c5efb32ba6f3365d6da07da64aaf668157042}"
 LTX_NODE_DIR="${COMFY_ROOT}/custom_nodes/ComfyUI-LTXVideo"
 CONVERTER_DIR="${COMFY_ROOT}/custom_nodes/comfyui-workflow-to-api-converter-endpoint"
 BLUEPRINT_DIR="${COMFY_ROOT}/blueprints"
-WORKFLOW_NAME="LTX-2.5_T2V_I2V_Single_Stage_Distilled.json"
+I2V_WORKFLOW_NAME="video_ltx2_5_i2v.json"
+T2V_WORKFLOW_NAME="video_ltx2_5_t2v.json"
 LTX_MODEL_ROOT="${AI_VIDEO_GEN_LTX_MODEL_ROOT:-${COMFY_ROOT}}"
 
 sync_repo() {
@@ -65,7 +67,15 @@ sync_repo "https://github.com/SethRobinson/comfyui-workflow-to-api-converter-end
 # Keep the reproducible Packet bootstrap on the last compatible release.
 "${COMFY_PYTHON}" -m pip install "kornia<0.8.3"
 
-install -m 0644 "${LTX_NODE_DIR}/example_workflows/2.5/${WORKFLOW_NAME}" "${BLUEPRINT_DIR}/${WORKFLOW_NAME}"
+# Use ComfyUI's stock templates, pinned to one revision. The single-stage
+# Lightricks example lacks the latent upscaler and uses an older tiled decode.
+for workflow in "${I2V_WORKFLOW_NAME}" "${T2V_WORKFLOW_NAME}"; do
+  curl --fail --location --silent --show-error --retry 3 \
+    "https://raw.githubusercontent.com/Comfy-Org/workflow_templates/${WORKFLOW_TEMPLATES_REF}/templates/${workflow}" \
+    -o "${BLUEPRINT_DIR}/${workflow}.download"
+  "${COMFY_PYTHON}" -m json.tool "${BLUEPRINT_DIR}/${workflow}.download" >/dev/null
+  mv "${BLUEPRINT_DIR}/${workflow}.download" "${BLUEPRINT_DIR}/${workflow}"
+done
 
 # ComfyUI receives its model search roots at boot.  Point it at the durable
 # cache directly instead of copying large weights back to ephemeral storage.
@@ -73,7 +83,8 @@ COMFY_MODEL_PATH_ARGS=()
 if [ "${LTX_MODEL_ROOT}" != "${COMFY_ROOT}" ]; then
   mkdir -p "${LTX_MODEL_ROOT}/models/diffusion_models" \
     "${LTX_MODEL_ROOT}/models/text_encoders" \
-    "${LTX_MODEL_ROOT}/models/vae"
+    "${LTX_MODEL_ROOT}/models/vae" \
+    "${LTX_MODEL_ROOT}/models/latent_upscale_models"
   EXTRA_MODEL_PATHS_FILE="${COMFY_ROOT}/extra_model_paths.ai-video-gen.yaml"
   printf '%s\n' \
     'ai_video_gen_persistent_ltx:' \
@@ -81,6 +92,7 @@ if [ "${LTX_MODEL_ROOT}" != "${COMFY_ROOT}" ]; then
     '  diffusion_models: models/diffusion_models' \
     '  text_encoders: models/text_encoders' \
     '  vae: models/vae' \
+    '  latent_upscale_models: models/latent_upscale_models' \
     > "${EXTRA_MODEL_PATHS_FILE}"
   COMFY_MODEL_PATH_ARGS=(--extra-model-paths-config "${EXTRA_MODEL_PATHS_FILE}")
 fi

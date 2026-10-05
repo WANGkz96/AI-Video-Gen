@@ -26,16 +26,16 @@ COMFY_LTX25_MODELS = [
         "targetFilename": "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
     },
     {
-        "id": "gemma4_e2b_it_bf16",
-        "label": "Gemma 4 prompt enhancer",
+        "id": "gemma4_e2b_it_int8_convrot",
+        "label": "Gemma 4 prompt enhancer (ComfyUI INT8)",
         "targetSubdir": "models/text_encoders",
-        "targetFilename": "gemma4_e2b_it_bf16.safetensors",
+        "targetFilename": "gemma4_e2b_it_int8_convrot.safetensors",
     },
     {
-        "id": "ltx_2_5_video_vae_conv",
-        "label": "LTX 2.5 convolutional video VAE",
+        "id": "ltx_2_5_video_vae",
+        "label": "LTX 2.5 video VAE",
         "targetSubdir": "models/vae",
-        "targetFilename": "ltx-2.5-video-vae-conv-bf16.safetensors",
+        "targetFilename": "ltx-2.5-video-vae-bf16.safetensors",
     },
     {
         "id": "ltx_2_5_audio_vae",
@@ -43,18 +43,25 @@ COMFY_LTX25_MODELS = [
         "targetSubdir": "models/vae",
         "targetFilename": "ltx-2.5-audio-vae-bf16.safetensors",
     },
+    {
+        "id": "ltx_2_5_latent_spatial_upscaler",
+        "label": "LTX 2.5 x2 latent spatial upscaler",
+        "targetSubdir": "models/latent_upscale_models",
+        "targetFilename": "ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors",
+    },
 ]
 
 # Keep these names in one place: the Packet bootstrap deliberately uses the
-# ComfyUI INT8/convrot pack so LTX and LongCat Avatar can coexist on Packet's
-# 150 GB ephemeral disk.  The official workflow defaults to BF16 names, so the
-# adapter must override those defaults in the converted API graph.
+# ComfyUI INT8 transformer/encoder pack so LTX and LongCat Avatar can coexist
+# on Packet's 150 GB ephemeral disk. Other filenames match the official
+# ComfyUI image-to-video template.
 COMFY_LTX25_MODEL_NAMES = {
     "transformer": "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
     "text_encoder": "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
-    "text_enhancer": "gemma4_e2b_it_bf16.safetensors",
-    "video_vae": "ltx-2.5-video-vae-conv-bf16.safetensors",
+    "text_enhancer": "gemma4_e2b_it_int8_convrot.safetensors",
+    "video_vae": "ltx-2.5-video-vae-bf16.safetensors",
     "audio_vae": "ltx-2.5-audio-vae-bf16.safetensors",
+    "latent_upscaler": "ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors",
 }
 
 

@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import mimetypes
+import math
 import os
 import secrets
 import shutil
@@ -81,7 +82,7 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
             key=self.key,
             label="ComfyUI LTX 2.5",
             description=(
-                "Production backend that executes the ComfyUI LTX 2.5 single-stage "
+                "Production backend that executes the official ComfyUI LTX 2.5 "
                 "text/image-to-video workflow through the local ComfyUI API."
             ),
             status="ready",
@@ -90,7 +91,7 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
             supportsDirect=True,
             requiresRemote=True,
             requiresDownload=bool(missing_models),
-            modelId="ComfyUI workflow: LTX-2.5_T2V_I2V_Single_Stage_Distilled",
+            modelId="ComfyUI workflow: video_ltx2_5_i2v / video_ltx2_5_t2v",
             localPath=self._settings.comfyui_t2v_workflow.parent.as_posix(),
             minimumVramGb=32,
             notes=notes,
@@ -190,10 +191,14 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
             ("Duration", "duration in seconds", "duration in seconds (determines frames #)"),
             request.durationSec,
         )
-        self._set_primitive_number(prompt, ("Frame Rate", "fps (frames per second)"), request.fps)
-        self._set_ltx25_resolution(prompt, width=request.width, height=request.height)
+        resolution = self._set_ltx25_resolution(
+            prompt,
+            width=int(request.backendParams.get("pipelineWidth") or request.width),
+            height=int(request.backendParams.get("pipelineHeight") or request.height),
+        )
         self._set_ltx25_audio_batch_size(prompt)
         self._set_image_mode(prompt, use_i2v=use_i2v)
+        self._disable_prompt_enhancer(prompt)
         self._set_ltx25_model_files(prompt)
         self._set_noise_seed(prompt, seed)
         self._add_save_video_node(prompt, output_prefix)
@@ -230,6 +235,7 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
                 "durationSec": request.durationSec,
             },
             "injectedControls": self._collect_injected_controls(prompt),
+            "resolutionSelector": resolution,
             "imageWiring": image_wiring,
             "payload": self.build_workflow_payload(request),
         }
@@ -259,8 +265,24 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
         api_workflow = response.json()
         if not isinstance(api_workflow, dict):
             raise AdapterUnavailableError(f"Unexpected workflow conversion response for {workflow_path}")
+        self._restore_resolution_selector_widgets(workflow, api_workflow)
         self._workflow_cache[workflow_path] = (mtime_ns, api_workflow)
         return api_workflow
+
+    @staticmethod
+    def _restore_resolution_selector_widgets(workflow: dict, api_workflow: dict[str, dict]) -> None:
+        """The pinned converter does not always map ComfyUI V3 node widgets."""
+        for node in workflow.get("nodes", []):
+            if node.get("type") != "ResolutionSelector":
+                continue
+            converted = api_workflow.get(str(node.get("id")))
+            values = node.get("widgets_values") or []
+            if not converted or converted.get("class_type") != "ResolutionSelector" or len(values) < 3:
+                raise AdapterUnavailableError("Could not convert the official LTX 2.5 ResolutionSelector.")
+            inputs = converted.setdefault("inputs", {})
+            inputs.setdefault("aspect_ratio", values[0])
+            inputs.setdefault("megapixels", values[1])
+            inputs.setdefault("multiple", values[2])
 
     async def _upload_image(
         self,
@@ -456,59 +478,63 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
             )
 
     def _set_image_mode(self, prompt: dict[str, dict], *, use_i2v: bool) -> None:
-        found_ltx25_control = False
-        for node in prompt.values():
-            inputs = node.setdefault("inputs", {})
-            # The official LTX 2.5 workflow represents the Input Parameters
-            # subgraph with generated field names. ``value_3`` is its explicit
-            # "use image input" boolean and remains stable in API conversion.
-            if {"value_2", "value_3", "value_5"}.issubset(inputs):
-                inputs["value_3"] = bool(use_i2v)
-                found_ltx25_control = True
-                continue
-            if node.get("class_type") != "PrimitiveBoolean":
-                continue
-            title = str((node.get("_meta") or {}).get("title") or "")
-            if "Text to Video" in title:
-                inputs["value"] = not use_i2v
-
-        # The workflow converter currently flattens the official
-        # ``bypass_i2v`` widget into a PrimitiveBoolean plus a ComfyNotNode.
-        # The Boolean node itself has the generic title ``Boolean``, so use
-        # the stable semantic title on the linked Not node to find it.
-        for node in prompt.values():
-            title = str((node.get("_meta") or {}).get("title") or "").lower()
-            if node.get("class_type") != "ComfyNotNode" or not any(
-                marker in title for marker in ("use image", "bypass_i2v")
-            ):
-                continue
-            link = node.setdefault("inputs", {}).get("value")
-            if not isinstance(link, list) or not link:
-                continue
-            control = prompt.get(str(link[0]))
-            if control and control.get("class_type") == "PrimitiveBoolean":
-                control.setdefault("inputs", {})["value"] = bool(use_i2v)
-                found_ltx25_control = True
-
-        if use_i2v and not found_ltx25_control:
-            # Older blueprints do not need this generated field; their image
-            # connection is wired below. The current LTX 2.5 template does.
-            if self._settings.comfyui_t2v_workflow == self._settings.comfyui_i2v_workflow:
-                raise AdapterUnavailableError("LTX 2.5 workflow does not expose the 'use image input' control.")
-
-    def _set_ltx25_resolution(self, prompt: dict[str, dict], *, width: int, height: int) -> None:
         found = False
         for node in prompt.values():
-            inputs = node.setdefault("inputs", {})
-            if {"width", "height"}.issubset(inputs):
-                inputs["width"] = int(width)
-                inputs["height"] = int(height)
+            if node.get("class_type") != "PrimitiveBoolean":
+                continue
+            title = str((node.get("_meta") or {}).get("title") or "").lower()
+            if "switch to text to video" in title:
+                node.setdefault("inputs", {})["value"] = not use_i2v
                 found = True
-        if found:
-            return
+        if use_i2v and not found:
+            raise AdapterUnavailableError("Official LTX 2.5 workflow does not expose its image/text mode switch.")
 
-        if self._settings.comfyui_t2v_workflow == self._settings.comfyui_i2v_workflow:
-            raise AdapterUnavailableError("LTX 2.5 workflow does not expose video width and height controls.")
+    @staticmethod
+    def _ltx25_aspect_ratio(width: int, height: int) -> str:
+        if width <= 0 or height <= 0:
+            raise AdapterUnavailableError("LTX 2.5 needs positive pipeline width and height.")
+        options = {
+            "1:1 (Square)": 1.0,
+            "2:3 (Portrait Photo)": 2 / 3,
+            "3:2 (Photo)": 3 / 2,
+            "3:4 (Portrait Standard)": 3 / 4,
+            "4:3 (Standard)": 4 / 3,
+            "9:16 (Portrait Widescreen)": 9 / 16,
+            "16:9 (Widescreen)": 16 / 9,
+            "21:9 (Ultrawide)": 21 / 9,
+        }
+        ratio = width / height
+        return min(options, key=lambda name: abs(math.log(ratio / options[name])))
+
+    def _set_ltx25_resolution(self, prompt: dict[str, dict], *, width: int, height: int) -> dict[str, object]:
+        aspect_ratio = self._ltx25_aspect_ratio(width, height)
+        megapixels = self._env_float("LTX25_MEGAPIXELS", 0.9, minimum=0.1)
+        if megapixels > 16.0:
+            raise AdapterUnavailableError("LTX25_MEGAPIXELS must be at most 16.0.")
+        for node in prompt.values():
+            if node.get("class_type") != "ResolutionSelector":
+                continue
+            inputs = node.setdefault("inputs", {})
+            if "aspect_ratio" not in inputs or "megapixels" not in inputs or "multiple" not in inputs:
+                raise AdapterUnavailableError("LTX 2.5 ResolutionSelector has unexpected inputs.")
+            inputs["aspect_ratio"] = aspect_ratio
+            inputs["megapixels"] = megapixels
+            return {
+                "aspectRatio": aspect_ratio,
+                "megapixels": megapixels,
+                "multiple": inputs["multiple"],
+                "pipelineWidth": width,
+                "pipelineHeight": height,
+            }
+        raise AdapterUnavailableError("Official LTX 2.5 workflow does not expose ResolutionSelector.")
+
+    def _disable_prompt_enhancer(self, prompt: dict[str, dict]) -> None:
+        for node in prompt.values():
+            if node.get("class_type") != "PrimitiveBoolean":
+                continue
+            title = str((node.get("_meta") or {}).get("title") or "").lower()
+            if "prompt enhance" in title:
+                node.setdefault("inputs", {})["value"] = False
 
     def _set_ltx25_audio_batch_size(self, prompt: dict[str, dict]) -> None:
         """Keep the joint LTX audio latent at one sample per generated video.
@@ -530,10 +556,8 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
     def _set_ltx25_model_files(self, prompt: dict[str, dict]) -> None:
         """Select the exact local LTX 2.5 pack in the converted Comfy graph.
 
-        Lightricks' example graph ships with BF16 file names.  Packet uses the
-        compatible Comfy INT8 transformer/text encoder to leave enough disk
-        for LongCat Avatar, therefore relying on the blueprint defaults would
-        make ComfyUI request files that were intentionally not downloaded.
+        The official template uses the same INT8 transformer and encoder as
+        Packet, plus its matching video VAE and latent spatial upscaler.
         """
 
         configured: set[str] = set()
@@ -548,21 +572,28 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
                 continue
 
             if class_type == "CLIPLoader" and "clip_name" in inputs:
-                if "enhancer" in title:
+                original_name = str(inputs["clip_name"]).lower()
+                if "enhancer" in title or "gemma4_e2b" in original_name:
                     inputs["clip_name"] = COMFY_LTX25_MODEL_NAMES["text_enhancer"]
                     configured.add("text_enhancer")
-                elif "encoder" in title or "ltx" in title:
+                elif "encoder" in title or "with-proj-ltx" in original_name:
                     inputs["clip_name"] = COMFY_LTX25_MODEL_NAMES["text_encoder"]
                     configured.add("text_encoder")
                 continue
 
             if class_type == "VAELoader" and "vae_name" in inputs:
-                if "audio" in title:
+                original_name = str(inputs["vae_name"]).lower()
+                if "audio" in title or "audio-vae" in original_name:
                     inputs["vae_name"] = COMFY_LTX25_MODEL_NAMES["audio_vae"]
                     configured.add("audio_vae")
-                elif "video" in title or "vae" in title:
+                elif "video" in title or "video-vae" in original_name:
                     inputs["vae_name"] = COMFY_LTX25_MODEL_NAMES["video_vae"]
                     configured.add("video_vae")
+                continue
+
+            if class_type == "LatentUpscaleModelLoader" and "model_name" in inputs:
+                inputs["model_name"] = COMFY_LTX25_MODEL_NAMES["latent_upscaler"]
+                configured.add("latent_upscaler")
                 continue
 
             # LTX's Input Parameters subgraph also carries a model selector
@@ -585,7 +616,7 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
             if isinstance(ckpt_name, list) and ckpt_name and str(ckpt_name[0]) not in prompt:
                 node["inputs"]["ckpt_name"] = COMFY_LTX25_MODEL_NAMES["transformer"]
 
-        expected = {"transformer", "text_encoder", "text_enhancer", "video_vae", "audio_vae"}
+        expected = {"transformer", "text_encoder", "text_enhancer", "video_vae", "audio_vae", "latent_upscaler"}
         missing = expected - configured
         if missing:
             raise AdapterUnavailableError(
@@ -668,8 +699,10 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
         # Its history entry is sufficient to download the result, and keeping
         # the workflow's own output node avoids relying on obsolete CreateVideo
         # graph internals from LTX 2.3.
-        if any(node.get("class_type") == "SaveVideo" for node in prompt.values()):
-            return
+        for node in prompt.values():
+            if node.get("class_type") == "SaveVideo":
+                node.setdefault("inputs", {})["filename_prefix"] = output_prefix
+                return
 
         create_node_id = None
         for node_id, node in prompt.items():

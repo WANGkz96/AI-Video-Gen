@@ -10,31 +10,28 @@ from backend.app.services.provisioning import COMFY_LTX25_MODEL_NAMES
 def test_ltx25_workflow_selects_packet_model_pack() -> None:
     adapter = object.__new__(ComfyUiWorkflowAdapter)
     prompt = {
-        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "bf16.safetensors"}},
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors"}},
         "2": {
             "class_type": "CLIPLoader",
-            "_meta": {"title": "Load CLIP - Text Encoder"},
-            "inputs": {"clip_name": "bf16.safetensors"},
+            "_meta": {"title": "CLIPLoader"},
+            "inputs": {"clip_name": "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors"},
         },
         "3": {
             "class_type": "CLIPLoader",
-            "_meta": {"title": "Load CLIP - Text Enhancer"},
-            "inputs": {"clip_name": "bf16.safetensors"},
+            "_meta": {"title": "CLIPLoader"},
+            "inputs": {"clip_name": "gemma4_e2b_it_int8_convrot.safetensors"},
         },
         "4": {
             "class_type": "VAELoader",
-            "_meta": {"title": "Load Video VAE"},
-            "inputs": {"vae_name": "bf16.safetensors"},
+            "_meta": {"title": "VAELoader"},
+            "inputs": {"vae_name": "ltx-2.5-video-vae-bf16.safetensors"},
         },
         "5": {
             "class_type": "VAELoader",
-            "_meta": {"title": "Load Audio VAE"},
-            "inputs": {"vae_name": "bf16.safetensors"},
+            "_meta": {"title": "VAELoader"},
+            "inputs": {"vae_name": "ltx-2.5-audio-vae-bf16.safetensors"},
         },
-        "6": {
-            "class_type": "LTXInputParameters",
-            "inputs": {"value_2": "", "value_3": False, "value_5": 8, "ckpt_name": "old.safetensors"},
-        },
+        "6": {"class_type": "LatentUpscaleModelLoader", "inputs": {"model_name": "old.safetensors"}},
     }
 
     adapter._set_ltx25_model_files(prompt)
@@ -44,29 +41,57 @@ def test_ltx25_workflow_selects_packet_model_pack() -> None:
     assert prompt["3"]["inputs"]["clip_name"] == COMFY_LTX25_MODEL_NAMES["text_enhancer"]
     assert prompt["4"]["inputs"]["vae_name"] == COMFY_LTX25_MODEL_NAMES["video_vae"]
     assert prompt["5"]["inputs"]["vae_name"] == COMFY_LTX25_MODEL_NAMES["audio_vae"]
-    assert prompt["6"]["inputs"]["ckpt_name"] == COMFY_LTX25_MODEL_NAMES["transformer"]
+    assert prompt["6"]["inputs"]["model_name"] == COMFY_LTX25_MODEL_NAMES["latent_upscaler"]
 
 
-def test_ltx25_workflow_sets_resolution_on_joint_input_node() -> None:
+def test_ltx25_workflow_sets_only_aspect_and_megapixels() -> None:
     adapter = object.__new__(ComfyUiWorkflowAdapter)
-    adapter._settings = SimpleNamespace(
-        comfyui_t2v_workflow="ltx25.json",
-        comfyui_i2v_workflow="ltx25.json",
-    )
     prompt = {
-        "5514": {
-            "class_type": "LTXVPreprocess",
-            "inputs": {
-                "width": 960,
-                "height": 544,
-            },
-        }
+        "403": {"class_type": "ResolutionSelector", "inputs": {
+            "aspect_ratio": "1:1 (Square)", "megapixels": 1.0, "multiple": 32,
+        }},
+        "398:372": {"class_type": "PrimitiveInt", "_meta": {"title": "Width"}, "inputs": {"value": ["403", 0]}},
+        "398:360": {"class_type": "PrimitiveInt", "_meta": {"title": "Height"}, "inputs": {"value": ["403", 1]}},
     }
 
-    adapter._set_ltx25_resolution(prompt, width=1280, height=720)
+    selected = adapter._set_ltx25_resolution(prompt, width=854, height=480)
 
-    assert prompt["5514"]["inputs"]["width"] == 1280
-    assert prompt["5514"]["inputs"]["height"] == 720
+    assert selected["aspectRatio"] == "16:9 (Widescreen)"
+    assert selected["megapixels"] == 0.9
+    assert prompt["403"]["inputs"] == {
+        "aspect_ratio": "16:9 (Widescreen)", "megapixels": 0.9, "multiple": 32,
+    }
+    assert prompt["398:372"]["inputs"]["value"] == ["403", 0]
+    assert prompt["398:360"]["inputs"]["value"] == ["403", 1]
+    assert adapter._ltx25_aspect_ratio(480, 854) == "9:16 (Portrait Widescreen)"
+
+
+def test_official_resolution_selector_widgets_survive_converter() -> None:
+    workflow = {"nodes": [{
+        "id": 403,
+        "type": "ResolutionSelector",
+        "widgets_values": ["16:9 (Widescreen)", 0.9, 32],
+    }]}
+    converted = {"403": {"class_type": "ResolutionSelector", "inputs": {}}}
+
+    ComfyUiWorkflowAdapter._restore_resolution_selector_widgets(workflow, converted)
+
+    assert converted["403"]["inputs"] == {
+        "aspect_ratio": "16:9 (Widescreen)", "megapixels": 0.9, "multiple": 32,
+    }
+
+
+def test_official_workflow_disables_prompt_enhancer() -> None:
+    adapter = object.__new__(ComfyUiWorkflowAdapter)
+    prompt = {"398:383": {
+        "class_type": "PrimitiveBoolean",
+        "_meta": {"title": "Boolean (Enable Prompt Enhance)"},
+        "inputs": {"value": True},
+    }}
+
+    adapter._disable_prompt_enhancer(prompt)
+
+    assert prompt["398:383"]["inputs"]["value"] is False
 
 
 def test_ltx25_workflow_keeps_audio_latent_batch_aligned_with_video() -> None:
@@ -111,24 +136,21 @@ def test_ltx25_workflow_accepts_official_duration_control_title() -> None:
     assert prompt["5512"]["inputs"]["value"] == 8.0
 
 
-def test_ltx25_workflow_sets_converted_bypass_i2v_boolean() -> None:
+def test_ltx25_workflow_sets_official_image_mode_without_touching_width() -> None:
     adapter = object.__new__(ComfyUiWorkflowAdapter)
     prompt = {
-        "5014:5506": {
+        "398:363": {
             "class_type": "PrimitiveBoolean",
-            "_meta": {"title": "Boolean"},
-            "inputs": {"value": False},
+            "_meta": {"title": "Switch to Text to Video?"},
+            "inputs": {"value": True},
         },
-        "5014:5019": {
-            "class_type": "ComfyNotNode",
-            "_meta": {"title": "Not (use image > bypass_i2v)"},
-            "inputs": {"value": ["5014:5506", 0]},
-        },
+        "398": {"class_type": "Subgraph", "inputs": {"value_2": 8, "value_3": ["403", 0], "value_5": 24}},
     }
 
     adapter._set_image_mode(prompt, use_i2v=True)
 
-    assert prompt["5014:5506"]["inputs"]["value"] is True
+    assert prompt["398:363"]["inputs"]["value"] is False
+    assert prompt["398"]["inputs"]["value_3"] == ["403", 0]
 
 
 def test_ltx25_workflow_repairs_dangling_gemma_api_model_link() -> None:
@@ -155,6 +177,7 @@ def test_ltx25_workflow_repairs_dangling_gemma_api_model_link() -> None:
             "_meta": {"title": "Load Audio VAE"},
             "inputs": {"vae_name": "bf16.safetensors"},
         },
+        "7": {"class_type": "LatentUpscaleModelLoader", "inputs": {"model_name": "old.safetensors"}},
         "6": {
             "class_type": "GemmaAPITextEncode",
             "inputs": {"ckpt_name": ["5004:5513", 0]},

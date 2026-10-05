@@ -116,6 +116,7 @@ write_runtime_env() {
   write_env_value "CORS_ORIGINS" "${CORS_ORIGINS}"
   write_env_value "SEGMENT_VARIANTS" "${SEGMENT_VARIANTS:-2}"
   write_env_value "VIDEO_DURATION_SEC" "${VIDEO_DURATION_SEC:-8}"
+  write_env_value "LTX25_MEGAPIXELS" "${LTX25_MEGAPIXELS:-0.9}"
   write_env_value "PORTRAIT_RESOLUTION" "${PORTRAIT_RESOLUTION:-720x1280}"
   write_env_value "LANDSCAPE_RESOLUTION" "${LANDSCAPE_RESOLUTION:-1280x720}"
   write_env_value "OUTPUT_UPSCALE" "${OUTPUT_UPSCALE:-off}"

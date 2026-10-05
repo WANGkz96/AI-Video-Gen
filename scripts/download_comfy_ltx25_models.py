@@ -40,20 +40,20 @@ MODEL_FILES = [
         target_filename="gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
     ),
     downloader.ComfyModelFile(
-        id="gemma4_e2b_it_bf16",
-        label="Gemma 4 prompt enhancer",
+        id="gemma4_e2b_it_int8_convrot",
+        label="Gemma 4 prompt enhancer (ComfyUI INT8)",
         repo_id="Comfy-Org/gemma-4",
-        repo_filename="text_encoders/gemma4_e2b_it_bf16.safetensors",
+        repo_filename="text_encoders/gemma4_e2b_it_int8_convrot.safetensors",
         target_subdir="models/text_encoders",
-        target_filename="gemma4_e2b_it_bf16.safetensors",
+        target_filename="gemma4_e2b_it_int8_convrot.safetensors",
     ),
     downloader.ComfyModelFile(
-        id="ltx_2_5_video_vae_conv",
-        label="LTX 2.5 convolutional video VAE",
+        id="ltx_2_5_video_vae",
+        label="LTX 2.5 video VAE",
         repo_id="Lightricks/LTX-2.5",
-        repo_filename="vae/ltx-2.5-video-vae-conv-bf16.safetensors",
+        repo_filename="vae/ltx-2.5-video-vae-bf16.safetensors",
         target_subdir="models/vae",
-        target_filename="ltx-2.5-video-vae-conv-bf16.safetensors",
+        target_filename="ltx-2.5-video-vae-bf16.safetensors",
     ),
     downloader.ComfyModelFile(
         id="ltx_2_5_audio_vae",
@@ -62,6 +62,14 @@ MODEL_FILES = [
         repo_filename="vae/ltx-2.5-audio-vae-bf16.safetensors",
         target_subdir="models/vae",
         target_filename="ltx-2.5-audio-vae-bf16.safetensors",
+    ),
+    downloader.ComfyModelFile(
+        id="ltx_2_5_latent_spatial_upscaler",
+        label="LTX 2.5 x2 latent spatial upscaler",
+        repo_id="Lightricks/LTX-2.5",
+        repo_filename="latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors",
+        target_subdir="models/latent_upscale_models",
+        target_filename="ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors",
     ),
 ]
 

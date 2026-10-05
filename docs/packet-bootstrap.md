@@ -10,7 +10,8 @@ checks out the ref supplied by Video-pipeline and delegates setup to
   per-run API token);
 - pinned ComfyUI, `ComfyUI-LTXVideo`, and workflow-to-API converter;
 - private ComfyUI on `127.0.0.1:18188`;
-- the official LTX 2.5 single-stage T2V/I2V workflow;
+- pinned copies of ComfyUI's stock LTX 2.5 T2V and I2V templates, including
+  the two-stage latent upscaler and tiled video decode;
 - a separate Python 3.10 LongCat Avatar runtime, only if the batch contains
   dialogue scenes.
 
@@ -39,18 +40,20 @@ above `3` are capped to keep Packet bootstrap bandwidth and disk I/O stable.
 ## Storage contract
 
 Packet's 150 GB ephemeral disk is shared by both branches.  The bootstrap
-therefore downloads only the five LTX 2.5 ComfyUI files used by the selected
+therefore downloads only the six LTX 2.5 ComfyUI files used by the selected
 INT8/convrot workflow pack and only Avatar's actual INT8 + distilled LongCat
 subtrees:
 
-- LTX transformer, text encoder, prompt enhancer, video VAE, audio VAE;
+- LTX INT8 transformer and text encoder, INT8 prompt enhancer (disabled by default),
+  video VAE, audio VAE, and x2 latent spatial upscaler;
 - LongCat `tokenizer`, `text_encoder`, `vae`;
 - Avatar `base_model_int8`, `lora`, `whisper-large-v3`, `vocal_separator`, and
   `scheduler`.
 
-The adapter rewrites the official workflow's BF16 default names to those exact
-local model files before submitting a ComfyUI prompt.  This is required: the
-BF16 defaults are intentionally not downloaded on the 150 GB profile.
+The adapter uses those exact model filenames, selects the aspect ratio from
+the pipeline's delivery dimensions, and sets `LTX25_MEGAPIXELS` (default
+`0.9`) on the stock Resolution Selector. The template's multiple stays at
+`32`; its frame rate and sampler settings are left unchanged.
 
 ## Persistent model cache
 
