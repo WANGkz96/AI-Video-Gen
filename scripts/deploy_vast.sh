@@ -7,6 +7,13 @@ PORT="${PORT:-8090}"
 # runtime isolated so its Git checkout cannot overwrite provider image files.
 COMFY_ROOT="${AI_VIDEO_GEN_COMFYUI_ROOT:-/workspace/AI-Video-Gen-ComfyUI}"
 GENERATOR_API_URL="http://127.0.0.1:18188"
+# Existing Vast templates export LTX 2.3 workflow paths. Override them in the
+# parent shell too: bootstrap_vast.sh cannot change inherited API variables.
+export COMFYUI_ROOT="${COMFY_ROOT}"
+export COMFYUI_T2V_WORKFLOW="${COMFY_ROOT}/blueprints/video_ltx2_5_t2v.json"
+export COMFYUI_I2V_WORKFLOW="${COMFY_ROOT}/blueprints/video_ltx2_5_i2v.json"
+export AI_VIDEO_GEN_LTX_MODEL_ROOT="${COMFY_ROOT}"
+export LTX25_MEGAPIXELS="${LTX25_MEGAPIXELS:-0.9}"
 STATUS_FILE="${AI_VIDEO_GEN_PROVISIONING_STATUS:-${ROOT_DIR}/data/provisioning-status.json}"
 LONGCAT_STATUS_FILE="${LONGCAT_PROVISIONING_STATUS:-${ROOT_DIR}/data/longcat-provisioning-status.json}"
 LONGCAT_ENV_DIR="${LONGCAT_CONDA_ENV_DIR:-/workspace/.venvs/longcat-video}"
@@ -24,7 +31,7 @@ COMFYUI_ROOT="${COMFY_ROOT}" \
 AI_VIDEO_GEN_LTX_MODEL_ROOT="${COMFY_ROOT}" \
 COMFYUI_T2V_WORKFLOW="${COMFY_ROOT}/blueprints/video_ltx2_5_t2v.json" \
 COMFYUI_I2V_WORKFLOW="${COMFY_ROOT}/blueprints/video_ltx2_5_i2v.json" \
-LTX25_MEGAPIXELS="${LTX25_MEGAPIXELS:-0.9}" \
+LTX25_MEGAPIXELS="${LTX25_MEGAPIXELS}" \
 AI_VIDEO_GEN_ENABLE_LTX="${ENABLE_LTX}" \
 AI_VIDEO_GEN_ENABLE_LONGCAT="${ENABLE_LONGCAT}" \
 AI_VIDEO_GEN_RELEASE_LONGCAT_WEIGHTS_AFTER_BRANCH="0" \
@@ -77,8 +84,8 @@ fi
 
 if [ "${ENABLE_LTX}" = "1" ]; then
   GENERATOR_API_URL="${GENERATOR_API_URL}" \
-  COMFYUI_T2V_WORKFLOW="${COMFY_ROOT}/blueprints/video_ltx2_5_t2v.json" \
-  COMFYUI_I2V_WORKFLOW="${COMFY_ROOT}/blueprints/video_ltx2_5_i2v.json" \
+  COMFYUI_T2V_WORKFLOW="${COMFYUI_T2V_WORKFLOW}" \
+  COMFYUI_I2V_WORKFLOW="${COMFYUI_I2V_WORKFLOW}" \
   "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/scripts/wait_for_comfyui_ready.py"
 fi
 
@@ -86,6 +93,8 @@ PORT="${PORT}" \
 GENERATOR_BACKEND="comfyui-ltx25" \
 GENERATOR_API_URL="${GENERATOR_API_URL}" \
 COMFYUI_ROOT="${COMFY_ROOT}" \
+COMFYUI_T2V_WORKFLOW="${COMFYUI_T2V_WORKFLOW}" \
+COMFYUI_I2V_WORKFLOW="${COMFYUI_I2V_WORKFLOW}" \
 AI_VIDEO_GEN_PROVISIONING_STATUS="${STATUS_FILE}" \
 LONGCAT_PROVISIONING_STATUS="${LONGCAT_STATUS_FILE}" \
 AI_VIDEO_GEN_EXECUTION_PROFILE="standard" \
