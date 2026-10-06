@@ -53,40 +53,18 @@ npm run dev
 - копирует его в выходную структуру job;
 - пишет debug-информацию о том, какой исходник был использован.
 
-## Real Models
+## Remote generation
 
-- `cogvideox-5b`, `wan2.2-ti2v-5b`, `sana-video-2b`, `hunyuan-video-1.5`, `ltx-2-distilled` работают через Diffusers.
-- `ltx-2.3` и `ltx-2.3-distilled` работают через официальный native runtime от Lightricks, а не через Diffusers.
-- При `download-models` или `scripts/deploy_vast.sh` для `ltx-2.3-distilled` сервис:
-  - скачивает `ltx-2.3-22b-distilled-1.1.safetensors` в `models/ltx-2.3-distilled/`;
-  - скачивает `ltx-2.3-spatial-upscaler-x2-1.1.safetensors` в `models/ltx-2.3-distilled/`;
-  - скачивает Gemma 3 assets в `models/gemma-3-12b-it-qat-q4_0-unquantized/`;
-  - клонирует pinned revision официального `LTX-2` runtime в `data/runtime/ltx-2-official/`;
-  - устанавливает `ltx-core` и `ltx-pipelines` в текущее виртуальное окружение.
-- Для `ltx-2.3`/`ltx-2.3-distilled` нужен `HF_TOKEN` с одобренным доступом к gated repo `google/gemma-3-12b-it-qat-q4_0-unquantized`.
-- `ltx-2.3-distilled` всегда использует внутренний LTX spatial upsampler, потому что официальный distilled pipeline двухстадийный. Дополнительный внешний post-upscale итогового mp4 задаётся через `OUTPUT_UPSCALE=off|1.5x|2x`; по умолчанию `off`.
-- Для GPU с VRAM меньше 90 GB можно выставить `LTX_OFFLOAD=cpu`; для RTX PRO 6000 96GB оставляй `LTX_OFFLOAD=none`.
-- Image-first сегменты для `ltx-2.3-distilled` автоматически передаются в официальный CLI как `--image PATH 0 0.85`. Силу привязки первого кадра можно менять через `LTX_IMAGE_STRENGTH`, а `LTX_INPUT_IMAGE_ARG_NAME=off` полностью отключает image conditioning.
+Packet and Vast use the same pinned ComfyUI LTX 2.5 workflows and model pack.
+Dialogue scenes use LongCat Avatar in a separate Python environment. Vast
+RTX PRO 6000 instances process those branches sequentially.
 
-Для полного Vast deploy:
-
-```bash
-git clone https://github.com/WANGkz96/AI-Video-Gen.git
-cd AI-Video-Gen
-PORT=8090 MODELS=ltx-2.3-distilled GENERATOR_BACKEND=ltx-2.3-distilled ./scripts/deploy_vast.sh
-```
-
-Если shell-скрипты после clone не получили executable bit, запускай через `bash`:
-
-```bash
-PORT=8090 MODELS=ltx-2.3-distilled GENERATOR_BACKEND=ltx-2.3-distilled bash ./scripts/deploy_vast.sh
-```
-
-Для автозапуска через Vast template, `PROVISIONING_SCRIPT` и кнопки во `Instance Portal` см. [`docs/vast-template.md`](./docs/vast-template.md).
-
-## ComfyUI Foundation
-
-В [`backend/app/adapters/comfyui.py`](./backend/app/adapters/comfyui.py) есть каркас под backend `comfyui-workflow`. Он пока не запускает workflow реально, но уже выделяет место под payload builder и будущий вызов внешнего ComfyUI API.
+The Vast template starts [`scripts/onstart_vast_instance.sh`](./scripts/onstart_vast_instance.sh),
+which checks out the requested repository revision and calls
+[`scripts/deploy_vast.sh`](./scripts/deploy_vast.sh). See
+[`docs/vast-comfyui-template.md`](./docs/vast-comfyui-template.md) for its
+configuration and readiness checks. LTX 2.3 variables from older Vast
+templates are ignored by this startup path.
 
 ## Пример входного batch
 

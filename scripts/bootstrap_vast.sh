@@ -4,27 +4,13 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV_DIR="${ROOT_DIR}/.venv"
 MODELS="${MODELS:-}"
-GENERATOR_BACKEND="${GENERATOR_BACKEND:-comfyui-ltx23}"
+GENERATOR_BACKEND="${GENERATOR_BACKEND:-comfyui-ltx25}"
 GENERATOR_API_URL="${GENERATOR_API_URL:-http://127.0.0.1:18188}"
 AI_VIDEO_GEN_DOWNLOAD_COMFY_MODELS="${AI_VIDEO_GEN_DOWNLOAD_COMFY_MODELS:-0}"
 AI_VIDEO_GEN_PROVISIONING_STATUS="${AI_VIDEO_GEN_PROVISIONING_STATUS:-${ROOT_DIR}/data/provisioning-status.json}"
 PORT="${PORT:-8080}"
 CORS_ORIGINS="${CORS_ORIGINS:-http://127.0.0.1:${PORT},http://localhost:${PORT}}"
 PYTHON_BIN="${PYTHON_BIN:-}"
-
-case "${GENERATOR_BACKEND}" in
-  comfyui-ltx23)
-    ;;
-  ltx-2.3-distilled|ltx23-distilled|ltx-native|ltx-2.3|wan2.2-ti2v-5b)
-    echo "Legacy GENERATOR_BACKEND='${GENERATOR_BACKEND}' detected; using comfyui-ltx23."
-    GENERATOR_BACKEND="comfyui-ltx23"
-    ;;
-esac
-
-if [ "${AI_VIDEO_GEN_FORCE_LTX23_DISTILLED:-0}" = "1" ]; then
-  echo "Ignoring legacy AI_VIDEO_GEN_FORCE_LTX23_DISTILLED=1; generation is handled by ComfyUI."
-  GENERATOR_BACKEND="comfyui-ltx23"
-fi
 
 ensure_apt_packages() {
   if ! command -v apt-get >/dev/null 2>&1; then
@@ -121,8 +107,8 @@ write_runtime_env() {
   write_env_value "LANDSCAPE_RESOLUTION" "${LANDSCAPE_RESOLUTION:-1280x720}"
   write_env_value "OUTPUT_UPSCALE" "${OUTPUT_UPSCALE:-off}"
   write_env_value "COMFYUI_ROOT" "${COMFYUI_ROOT:-/workspace/ComfyUI}"
-  write_env_value "COMFYUI_T2V_WORKFLOW" "${COMFYUI_T2V_WORKFLOW:-/workspace/ComfyUI/blueprints/Text to Video (LTX-2.3).json}"
-  write_env_value "COMFYUI_I2V_WORKFLOW" "${COMFYUI_I2V_WORKFLOW:-/workspace/ComfyUI/blueprints/Image to Video (LTX-2.3).json}"
+  write_env_value "COMFYUI_T2V_WORKFLOW" "${COMFYUI_T2V_WORKFLOW:-/workspace/ComfyUI/blueprints/video_ltx2_5_t2v.json}"
+  write_env_value "COMFYUI_I2V_WORKFLOW" "${COMFYUI_I2V_WORKFLOW:-/workspace/ComfyUI/blueprints/video_ltx2_5_i2v.json}"
   write_env_value "COMFYUI_OUTPUT_PREFIX" "${COMFYUI_OUTPUT_PREFIX:-video/AI_Video_Gen}"
   write_env_value "COMFYUI_STRIP_AUDIO" "${COMFYUI_STRIP_AUDIO:-0}"
   write_env_value "COMFYUI_NORMALIZE_OUTPUT" "${COMFYUI_NORMALIZE_OUTPUT:-0}"
@@ -206,12 +192,6 @@ write_runtime_env
 if [ -n "${MODELS}" ] && [ "${AI_VIDEO_GEN_DOWNLOAD_MODELS:-0}" = "1" ]; then
   python -m backend.app.cli download-models --models "${MODELS}"
 fi
-if [ "${GENERATOR_BACKEND}" = "comfyui-ltx23" ] && [ "${AI_VIDEO_GEN_SYNC_MODEL_DOWNLOAD:-0}" = "1" ]; then
-  python scripts/download_comfy_ltx23_models.py \
-    --comfy-root "${COMFYUI_ROOT:-/workspace/ComfyUI}" \
-    --status-file "${AI_VIDEO_GEN_PROVISIONING_STATUS}"
-fi
-
 echo "Bootstrap complete."
 echo "Run with:"
 echo "  source .venv/bin/activate"

@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${PORT:-8090}"
-BACKEND="${GENERATOR_BACKEND:-comfyui-ltx23}"
+BACKEND="${GENERATOR_BACKEND:-comfyui-ltx25}"
 GENERATOR_API_URL="${GENERATOR_API_URL:-http://127.0.0.1:18188}"
 CORS="${CORS_ORIGINS:-http://127.0.0.1:8080,http://localhost:8080}"
 COMFYUI_ROOT="${COMFYUI_ROOT:-/workspace/ComfyUI}"

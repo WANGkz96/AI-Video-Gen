@@ -1,167 +1,63 @@
-# Vast AI ComfyUI Template
+# Vast AI LTX 2.5 + LongCat template
 
-AI-Video-Gen production generation runs through the ComfyUI LTX 2.3 workflows.
-The service no longer downloads or executes native LTX weights directly.
+Vast uses the same pinned ComfyUI checkout, LTX 2.5 stock I2V/T2V workflows,
+model pack, and LongCat Avatar provisioner as Packet. The AI-Video-Gen startup
+script installs these components on the instance; the image's bundled ComfyUI
+version and any legacy LTX 2.3 template variables are not used.
 
-## Base Image
+## Vast template
 
-Use the Vast AI ComfyUI image:
-
-```text
-vastai/comfy
-```
-
-The template must expose the AI-Video-Gen web app port and keep ComfyUI running
-inside the container.
-
-Recommended extra portal entry:
-
-```text
-localhost:8090:8090:/:AI Video Gen
-```
-
-## Environment
-
-Set these variables in the Vast template:
+Use an Ubuntu GPU image with NVIDIA drivers, `apt-get`, root or passwordless
+`sudo`, and an SSH/direct port. Expose port `8090` for AI-Video-Gen. The pinned
+ComfyUI API listens only on `127.0.0.1:18188` inside the instance.
 
 ```text
 PORT=8090
-REPO_URL=https://github.com/WANGkz96/AI-Video-Gen.git
-REPO_REF=master
 WORK_ROOT=/workspace
 APP_DIR=/workspace/AI-Video-Gen
+REPO_URL=https://github.com/WANGkz96/AI-Video-Gen.git
+REPO_REF=master
 PROVISIONING_SCRIPT=https://raw.githubusercontent.com/WANGkz96/AI-Video-Gen/master/scripts/onstart_vast_instance.sh
-GENERATOR_BACKEND=comfyui-ltx23
-GENERATOR_API_URL=http://127.0.0.1:18188
-COMFYUI_ROOT=/workspace/ComfyUI
-COMFYUI_T2V_WORKFLOW=/workspace/ComfyUI/blueprints/Text to Video (LTX-2.3).json
-COMFYUI_I2V_WORKFLOW=/workspace/ComfyUI/blueprints/Image to Video (LTX-2.3).json
-COMFYUI_OUTPUT_PREFIX=video/AI_Video_Gen
-COMFYUI_STRIP_AUDIO=0
-COMFYUI_NORMALIZE_OUTPUT=0
-AI_VIDEO_GEN_DOWNLOAD_COMFY_MODELS=1
-ENABLE_LEGACY_BACKENDS=0
-ENABLE_MOCK_BACKEND=0
-SEGMENT_VARIANTS=2
-VIDEO_DURATION_SEC=8
-PORTRAIT_RESOLUTION=720x1280
-LANDSCAPE_RESOLUTION=1280x720
-OUTPUT_UPSCALE=off
+AI_VIDEO_GEN_ENABLE_LTX=1
+AI_VIDEO_GEN_ENABLE_LONGCAT=1
+LTX25_MEGAPIXELS=0.9
 ```
 
-`HF_TOKEN` is optional unless Hugging Face requires authentication for the model
-files or rate limits the machine.
+Set `PROVISIONING_SCRIPT` in the Vast template and retain its normal
+`entrypoint.sh` on-start command. The Video-pipeline launch payload sets the
+two `AI_VIDEO_GEN_ENABLE_*` flags for each batch. It requests 400 GB of disk
+and selects one RTX PRO 6000 WS, S, or Max-Q under the configured hourly cap.
+`HF_TOKEN` is optional unless Hugging Face requires authentication.
 
-## Required Workflows
+The startup script checks out `REPO_REF`, installs Python 3.12 for the API and
+ComfyUI, installs Python 3.10 in a separate LongCat environment, and downloads
+the model files required by the selected branches. Both model packs remain on
+the 400 GB instance disk. Generation is sequential (`standard` profile); the
+LongCat weights are not deleted between branches. The backend may accept a
+batch while downloads finish, then waits for each required branch to be ready.
+Before exposing the API, startup verifies that ComfyUI converts both stock
+workflows and exposes their required nodes.
+Its pinned ComfyUI checkout lives at `/workspace/AI-Video-Gen-ComfyUI`, separate
+from any ComfyUI copy bundled in the Vast image.
 
-The ComfyUI template must contain these blueprint files:
+The LTX controls are the pipeline image, prompt, duration, nearest supported
+aspect ratio, and `LTX25_MEGAPIXELS` (default `0.9`). The stock template keeps
+its `multiple`, frame rate, and sampler settings. See
+[`packet-bootstrap.md`](packet-bootstrap.md) for the pinned ComfyUI workflow
+and six model files used by both providers.
 
-```text
-/workspace/ComfyUI/blueprints/Text to Video (LTX-2.3).json
-/workspace/ComfyUI/blueprints/Image to Video (LTX-2.3).json
-```
+## Readiness checks
 
-AI-Video-Gen calls:
-
-```text
-video_ltx2_3_t2v
-video_ltx2_3_i2v
-```
-
-through ComfyUI's HTTP API. No other production generation backend is selected
-by default.
-
-The image-to-video path uploads a first-frame image to ComfyUI and wires it into
-the converted I2V workflow before queueing the prompt.
-
-## Required ComfyUI Extension
-
-The template must include:
-
-```text
-/workspace/ComfyUI/custom_nodes/comfyui-workflow-to-api-converter-endpoint
-```
-
-AI-Video-Gen uses its endpoint:
-
-```text
-POST http://127.0.0.1:18188/workflow/convert
-```
-
-to convert the ComfyUI blueprint JSON into API prompt JSON.
-
-## Required Model Files
-
-`scripts/download_comfy_ltx23_models.py` downloads or verifies these files:
-
-```text
-Comfy-Org/ltx-2:
-  split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors
-  -> /workspace/ComfyUI/models/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors
-
-Lightricks/LTX-2.3-fp8:
-  ltx-2.3-22b-dev-fp8.safetensors
-  -> /workspace/ComfyUI/models/checkpoints/ltx-2.3-22b-dev-fp8.safetensors
-
-Lightricks/LTX-2.3:
-  ltx-2.3-22b-distilled-lora-384.safetensors
-  -> /workspace/ComfyUI/models/loras/ltx-2.3-22b-distilled-lora-384.safetensors
-
-Comfy-Org/ltx-2:
-  split_files/loras/gemma-3-12b-it-abliterated_lora_rank64_bf16.safetensors
-  -> /workspace/ComfyUI/models/loras/gemma-3-12b-it-abliterated_lora_rank64_bf16.safetensors
-
-Lightricks/LTX-2.3:
-  ltx-2.3-spatial-upscaler-x2-1.1.safetensors
-  -> /workspace/ComfyUI/models/latent_upscale_models/ltx-2.3-spatial-upscaler-x2-1.1.safetensors
-```
-
-The startup script skips existing non-empty files, so repeated instance starts
-do not re-download the weights.
-
-## Startup Flow
-
-Use this on-start command in the Vast template:
-
-```text
-entrypoint.sh
-```
-
-and keep `PROVISIONING_SCRIPT` pointed at:
-
-```text
-https://raw.githubusercontent.com/WANGkz96/AI-Video-Gen/master/scripts/onstart_vast_instance.sh
-```
-
-The script:
-
-1. clones or updates `/workspace/AI-Video-Gen`;
-2. installs the backend into a local venv;
-3. builds the Vue frontend;
-4. downloads missing ComfyUI model files when `AI_VIDEO_GEN_DOWNLOAD_COMFY_MODELS=1`;
-5. verifies that every required ComfyUI model file exists and is non-empty;
-6. starts a background readiness watcher;
-7. returns from provisioning so the Vast ComfyUI entrypoint can start ComfyUI;
-8. the watcher waits for the ComfyUI API and `/workflow/convert` to accept both LTX 2.3 workflows;
-9. the watcher starts AI-Video-Gen on `PORT`.
-
-AI-Video-Gen deliberately does not start before steps 5 and 6 pass. The
-`localhost:8090` portal entry therefore becomes a coarse readiness indicator:
-if the web app opens, the required model files, workflows, and ComfyUI converter
-endpoint are ready.
-
-## Health Checks
-
-Inside the instance:
+From SSH on the instance:
 
 ```bash
-curl http://127.0.0.1:18188/system_stats
-curl http://127.0.0.1:8090/api/health
-curl http://127.0.0.1:8090/api/backends
+git -C /workspace/AI-Video-Gen rev-parse HEAD
+curl --fail http://127.0.0.1:18188/system_stats
+curl --fail -H "Authorization: Bearer $AI_VIDEO_GEN_API_TOKEN" http://127.0.0.1:8090/api/health
 ```
 
-`/api/backends` should list only the ready production backend:
-
-```text
-comfyui-ltx23
-```
+The health response reports separate LTX and LongCat provisioning states.
+Inspect `.run/ltx25-download.*.log`, `.run/longcat-provision.*.log`,
+`.run/backend.*.log`, and `/workspace/AI-Video-Gen-ComfyUI/.run/comfyui.*.log` when a
+branch is not ready. No Vast instance is started by these instructions;
+launch is an explicit action in Video-pipeline's `live_vast` mode.
