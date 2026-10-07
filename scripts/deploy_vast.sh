@@ -47,6 +47,16 @@ mkdir -p "${ROOT_DIR}/.run"
 export PATH="${ROOT_DIR}/.venv/bin:${PATH}"
 
 if [ "${ENABLE_LTX}" = "1" ]; then
+  # Vast's ComfyUI image supervises a second ComfyUI on the same port. Once
+  # provisioning finishes it repeatedly restarts against our pinned runtime.
+  # Stop that managed process before starting the version used by this service.
+  if command -v supervisorctl >/dev/null 2>&1; then
+    provider_comfy_status="$(supervisorctl status comfyui 2>/dev/null || true)"
+    if [[ "${provider_comfy_status}" =~ ^comfyui[[:space:]]+(RUNNING|STARTING|BACKOFF) ]]; then
+      supervisorctl stop comfyui
+    fi
+  fi
+
   COMFYUI_ROOT="${COMFY_ROOT}" \
   AI_VIDEO_GEN_LTX_MODEL_ROOT="${COMFY_ROOT}" \
   COMFYUI_PORT="18188" \
