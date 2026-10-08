@@ -23,6 +23,10 @@ from backend.app.models import AdapterInfo, GenerationArtifact, SegmentGeneratio
 from backend.app.services.provisioning import COMFY_LTX25_MODEL_NAMES, missing_comfy_ltx25_model_files
 
 
+# Keep the official LTX workflow's negative conditioning unless explicitly enabled.
+_USE_PIPELINE_NEGATIVE_PROMPT = False
+
+
 _T2V_PLACEHOLDER_JPEG = base64.b64decode(
     "/9j/4AAQSkZJRgABAgAAAQABAAD//gAQTGF2YzYyLjE5LjEwMAD/2wBDAAgEBAQEBAUFBQUFBQYGBgYGBgYGBgYGBgYHBwcICAgHBwcGBgcHCAgICAkJCQgICAgJCQoKCgwMCwsODg4RERT/xABLAAEBAAAAAAAAAAAAAAAAAAAACAEBAAAAAAAAAAAAAAAAAAAAABABAAAAAAAAAAAAAAAAAAAAABEBAAAAAAAAAAAAAAAAAAAAAP/AABEIAEAAQAMBIgACEQADEQD/2gAMAwEAAhEDEQA/AJ/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB//9k="
 )
@@ -151,7 +155,14 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
             },
             "inputs": {
                 "prompt": request.resolvedPrompt,
-                "negative_prompt": request.resolvedNegativePrompt,
+                "negative_prompt": (
+                    request.resolvedNegativePrompt or request.negativePrompt
+                    if _USE_PIPELINE_NEGATIVE_PROMPT
+                    else None
+                ),
+                "negative_prompt_source": (
+                    "pipeline" if _USE_PIPELINE_NEGATIVE_PROMPT else "workflow_default"
+                ),
                 "duration_sec": request.durationSec,
                 "width": request.width,
                 "height": request.height,
@@ -185,7 +196,8 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
         output_prefix = self._build_output_prefix(request)
 
         self._set_prompt_text(prompt, request.resolvedPrompt or request.prompt)
-        self._set_negative_prompt(prompt, request.resolvedNegativePrompt or request.negativePrompt)
+        if _USE_PIPELINE_NEGATIVE_PROMPT:
+            self._set_negative_prompt(prompt, request.resolvedNegativePrompt or request.negativePrompt)
         self._set_primitive_number(
             prompt,
             ("Duration", "duration in seconds", "duration in seconds (determines frames #)"),
