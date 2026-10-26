@@ -21,6 +21,7 @@ import math
 import os
 import traceback
 from dataclasses import dataclass
+from functools import wraps
 from pathlib import Path
 from typing import Any
 
@@ -111,6 +112,31 @@ def _cuda_context_is_corrupted(exc: BaseException) -> bool:
     )
 
 
+def _configure_vae_cudnn(vae: Any) -> None:
+    """Keep the Blackwell audio workaround out of the Wan VAE's Conv3d path.
+
+    Disabling cuDNN globally makes a 93-frame 480p decode take minutes on
+    RTX PRO 6000. The same pinned VAE decodes with cuDNN in seconds. Restore
+    the previous flag after each call so Whisper retains its existing policy.
+    LONGCAT_VAE_CUDNN=0 restores the historical fallback for another driver.
+    """
+    if str(os.getenv("LONGCAT_VAE_CUDNN", "1")).strip().lower() in {"0", "false", "off", "no"}:
+        return
+    if not torch.cuda.is_available() or torch.cuda.get_device_capability() != (12, 0):
+        return
+
+    def with_cudnn(method):
+        @wraps(method)
+        def call(*args, **kwargs):
+            with torch.backends.cudnn.flags(enabled=True):
+                return method(*args, **kwargs)
+        return call
+
+    vae.encode = with_cudnn(vae.encode)
+    vae.decode = with_cudnn(vae.decode)
+    print("[INFO] cuDNN enabled for LongCat VAE; audio keeps the Blackwell workaround.", flush=True)
+
+
 def _load_runtime(args: argparse.Namespace) -> Runtime:
     if torch.cuda.is_available() and torch.cuda.get_device_capability() == (12, 0):
         # Matches the tested Blackwell workaround in patch_longcat_runtime.py.
@@ -136,6 +162,7 @@ def _load_runtime(args: argparse.Namespace) -> Runtime:
     tokenizer = AutoTokenizer.from_pretrained(runtime_dir, subfolder="tokenizer", torch_dtype=torch.bfloat16)
     text_encoder = UMT5EncoderModel.from_pretrained(runtime_dir, subfolder="text_encoder", torch_dtype=torch.bfloat16)
     vae = AutoencoderKLWan.from_pretrained(runtime_dir, subfolder="vae", torch_dtype=torch.bfloat16)
+    _configure_vae_cudnn(vae)
     scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
         checkpoint_dir,
         subfolder="scheduler",
