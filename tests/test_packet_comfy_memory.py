@@ -13,10 +13,20 @@ def test_packet_caps_host_threads_and_selects_safe_allocator():
 
 
 def test_shared_comfy_bootstrap_keeps_memory_switches_opt_in():
-    script = (ROOT / 'scripts/provision_packet_comfyui.sh').read_text()
+    script = (ROOT / 'scripts/start_comfyui.sh').read_text()
     assert 'if [ "${COMFYUI_SAFE_CUDA_MEMORY:-0}" = "1" ]; then' in script
     assert 'COMFY_MEMORY_ARGS=()' in script
     assert '"${COMFY_MEMORY_ARGS[@]}"' in script
     for flag in ('--disable-cuda-malloc', '--disable-dynamic-vram', '--disable-async-offload', '--disable-pinned-memory'):
         assert flag in script
     assert 'CUDA_LAUNCH_BLOCKING' not in script
+
+
+def test_mixed_standard_packet_prepares_but_defers_comfy_process():
+    deploy = (ROOT / 'scripts/deploy_packet.sh').read_text()
+    provision = (ROOT / 'scripts/provision_packet_comfyui.sh').read_text()
+    assert 'COMFYUI_DEFER_START=1' in deploy
+    assert 'COMFYUI_DEFER_START="${COMFYUI_DEFER_START}"' in deploy
+    assert '--comfy-start-script "${ROOT_DIR}/scripts/start_comfyui.sh"' in deploy
+    assert 'if [ "${COMFYUI_DEFER_START:-0}" = "1" ]; then' in provision
+    assert '"$(dirname "${BASH_SOURCE[0]}")/start_comfyui.sh"' in provision

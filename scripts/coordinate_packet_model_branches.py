@@ -72,6 +72,7 @@ def _parse_args() -> argparse.Namespace:
         help="Exact LongCat weights directory that may be removed after a failed first branch.",
     )
     parser.add_argument("--poll-sec", type=float, default=2.0)
+    parser.add_argument("--comfy-start-script", help="Start the prepared Comfy runtime only after the LongCat gate opens.")
     parser.add_argument(
         "--preserve-longcat-weights",
         action="store_true",
@@ -101,6 +102,15 @@ def _release_failed_longcat_weights(path: Path) -> None:
 
 def _start_ltx_download(args: argparse.Namespace, status_file: Path, message: str) -> int:
     _write_ltx_status(status_file, status="starting", message=message)
+    start_script = getattr(args, "comfy_start_script", None)
+    if start_script:
+        try:
+            started = subprocess.run(["bash", start_script], check=False)
+            if started.returncode:
+                raise RuntimeError(f"Comfy startup returned {started.returncode}")
+        except (OSError, RuntimeError) as exc:
+            _write_ltx_status(status_file, status="error", message="Unable to start prepared ComfyUI.", error=str(exc))
+            return 1
     print("Packet model sequence: starting LTX downloader.", flush=True)
     return subprocess.run(args.download_command, check=False).returncode
 

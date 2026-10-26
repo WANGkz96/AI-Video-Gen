@@ -25,6 +25,26 @@ def _load_coordinator_module():
     return module
 
 
+def test_deferred_comfy_starts_before_downloader(tmp_path, monkeypatch):
+    module = _load_coordinator_module()
+    calls = []
+    monkeypatch.setattr(module.subprocess, 'run', lambda argv, **_: (calls.append(argv) or SimpleNamespace(returncode=0)))
+    args = SimpleNamespace(comfy_start_script='/prepared/start_comfy.sh', download_command=['download', '--models'])
+    assert module._start_ltx_download(args, tmp_path / 'status.json', 'released') == 0
+    assert calls == [['bash', '/prepared/start_comfy.sh'], ['download', '--models']]
+
+
+def test_failed_comfy_start_blocks_download_and_reports_error(tmp_path, monkeypatch):
+    module = _load_coordinator_module()
+    calls = []
+    monkeypatch.setattr(module.subprocess, 'run', lambda argv, **_: (calls.append(argv) or SimpleNamespace(returncode=3)))
+    args = SimpleNamespace(comfy_start_script='/prepared/start_comfy.sh', download_command=['download'])
+    path = tmp_path / 'status.json'
+    assert module._start_ltx_download(args, path, 'released') == 1
+    assert calls == [['bash', '/prepared/start_comfy.sh']]
+    assert json.loads(path.read_text())['status'] == 'error'
+
+
 def test_packet_deploy_serializes_mixed_model_branches_and_caps_downloads() -> None:
     script = (ROOT / "scripts" / "deploy_packet.sh").read_text(encoding="utf-8")
 

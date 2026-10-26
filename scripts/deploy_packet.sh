@@ -20,6 +20,8 @@ export MKL_NUM_THREADS="${AI_VIDEO_GEN_CPU_THREADS}"
 export OPENBLAS_NUM_THREADS="${AI_VIDEO_GEN_CPU_THREADS}"
 export NUMEXPR_NUM_THREADS="${AI_VIDEO_GEN_CPU_THREADS}"
 export COMFYUI_SAFE_CUDA_MEMORY="${COMFYUI_SAFE_CUDA_MEMORY:-1}"
+export LONGCAT_PRELOAD_VAE="${LONGCAT_PRELOAD_VAE:-1}"
+export LONGCAT_SERIAL_MODEL_UPLOAD="${LONGCAT_SERIAL_MODEL_UPLOAD:-1}"
 AI_VIDEO_GEN_TURBO_MAX_CONCURRENT_BRANCHES="${AI_VIDEO_GEN_TURBO_MAX_CONCURRENT_BRANCHES:-2}"
 AI_VIDEO_GEN_TURBO_MIN_VRAM_GB="${AI_VIDEO_GEN_TURBO_MIN_VRAM_GB:-160}"
 if [ "${AI_VIDEO_GEN_EXECUTION_PROFILE}" != "turbo" ]; then
@@ -107,7 +109,12 @@ bash "${ROOT_DIR}/scripts/bootstrap_vast.sh"
 # base Ubuntu image marks its system interpreter as externally managed, while
 # the venv is exactly where its runtime dependencies belong.
 if [ "${AI_VIDEO_GEN_ENABLE_LTX}" = "1" ]; then
+  COMFYUI_DEFER_START=0
+  if [ "${AI_VIDEO_GEN_ENABLE_LONGCAT}" = "1" ] && [ "${AI_VIDEO_GEN_EXECUTION_PROFILE}" != "turbo" ]; then
+    COMFYUI_DEFER_START=1
+  fi
   COMFYUI_ROOT="${COMFY_ROOT}" \
+  COMFYUI_DEFER_START="${COMFYUI_DEFER_START}" \
   AI_VIDEO_GEN_LTX_MODEL_ROOT="${LTX_MODEL_ROOT}" \
   COMFYUI_PORT="18188" \
   COMFY_PYTHON="${COMFY_PYTHON:-${ROOT_DIR}/.venv/bin/python}" \
@@ -147,12 +154,14 @@ if [ "${AI_VIDEO_GEN_ENABLE_LONGCAT}" = "1" ]; then
 fi
 
 if [ "${AI_VIDEO_GEN_ENABLE_LTX}" = "1" ] && [ "${AI_VIDEO_GEN_ENABLE_LONGCAT}" = "1" ] && [ "${AI_VIDEO_GEN_EXECUTION_PROFILE}" != "turbo" ]; then
-  nohup env \
+  nohup env COMFYUI_ROOT="${COMFY_ROOT}" AI_VIDEO_GEN_LTX_MODEL_ROOT="${LTX_MODEL_ROOT}" \
+    COMFY_PYTHON="${COMFY_PYTHON:-${ROOT_DIR}/.venv/bin/python}" \
     "${ROOT_DIR}/.venv/bin/python" "${ROOT_DIR}/scripts/coordinate_packet_model_branches.py" \
     --longcat-status-file "${LONGCAT_STATUS_FILE}" \
     --ltx-status-file "${STATUS_FILE}" \
     --release-file "${LONGCAT_RELEASE_FILE}" \
     --longcat-weights-dir "${LONGCAT_MODEL_ROOT}" \
+    --comfy-start-script "${ROOT_DIR}/scripts/start_comfyui.sh" \
     --poll-sec "${AI_VIDEO_GEN_PACKET_BRANCH_SEQUENCE_POLL_SEC:-2}" \
     "${LONGCAT_COORDINATOR_ARGS[@]}" \
     -- \

@@ -169,6 +169,15 @@ def _upload_pipeline(pipe: Any, rank: int) -> None:
         print(f"[INFO] LongCat {name} upload complete.", flush=True)
 
 
+def _configure_separator_device(separator: Any) -> None:
+    """Do not shuttle FFT tensors through CUDA for a CPU-only ONNX model."""
+    providers = separator.onnx_execution_provider or []
+    if str(separator.torch_device).startswith("cuda") and "CUDAExecutionProvider" not in providers:
+        separator.torch_device = separator.torch_device_cpu
+        separator.onnx_execution_provider = ["CPUExecutionProvider"]
+        print("[INFO] CPU-only ONNX vocal separator: keeping FFT on CPU too.", flush=True)
+
+
 def _load_runtime(args: argparse.Namespace) -> Runtime:
     if torch.cuda.is_available() and torch.cuda.get_device_capability() == (12, 0):
         # Matches the tested Blackwell workaround in patch_longcat_runtime.py.
@@ -228,6 +237,7 @@ def _load_runtime(args: argparse.Namespace) -> Runtime:
         output_single_stem="vocals",
         model_file_dir=vocal_separator_path.parent,
     )
+    _configure_separator_device(vocal_separator)
     vocal_separator.load_model(vocal_separator_path.name)
 
     pipe = LongCatVideoAvatarPipeline(

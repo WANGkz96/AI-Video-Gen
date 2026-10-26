@@ -131,3 +131,20 @@ def test_longcat_log_is_readable_before_process_completion(tmp_path):
         assert await task == 'uploading\ndone\n'
         process.wait.assert_awaited_once()
     asyncio.run(run())
+
+
+@pytest.mark.parametrize('device,providers,expected', [
+    ('cuda', None, 'cpu'), ('cuda:0', ['CPUExecutionProvider'], 'cpu'),
+    ('cuda', ['CUDAExecutionProvider', 'CPUExecutionProvider'], 'cuda'),
+    ('mps', ['CoreMLExecutionProvider'], 'mps'),
+])
+def test_separator_fft_matches_actual_provider(device, providers, expected):
+    source = ast.parse((ROOT / 'scripts/run_longcat_avatar_batch.py').read_text())
+    node = next(n for n in source.body if isinstance(n, ast.FunctionDef) and n.name == '_configure_separator_device')
+    namespace = dict(Any=Any)
+    exec(compile(ast.Module(body=[node], type_ignores=[]), '<separator>', 'exec'), namespace)
+    separator = SimpleNamespace(torch_device=device, torch_device_cpu='cpu', onnx_execution_provider=providers)
+    namespace['_configure_separator_device'](separator)
+    assert separator.torch_device == expected
+    if expected == 'cpu':
+        assert separator.onnx_execution_provider == ['CPUExecutionProvider']
