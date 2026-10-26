@@ -98,11 +98,18 @@ if [ "${LTX_MODEL_ROOT}" != "${COMFY_ROOT}" ]; then
 fi
 
 mkdir -p "${COMFY_ROOT}/.run"
+# Packet's R580 container driver has crashed in the VAE with the asynchronous
+# allocator. Keep this selectable so other providers retain their normal path.
+COMFY_MEMORY_ARGS=()
+if [ "${COMFYUI_SAFE_CUDA_MEMORY:-0}" = "1" ]; then
+  COMFY_MEMORY_ARGS=(--disable-cuda-malloc --disable-dynamic-vram --disable-async-offload --disable-pinned-memory)
+fi
 pkill -f "${COMFY_ROOT}/main.py.*--port ${COMFY_PORT}" || true
 nohup "${COMFY_PYTHON}" "${COMFY_ROOT}/main.py" \
   --listen 127.0.0.1 \
   --port "${COMFY_PORT}" \
   --disable-auto-launch \
+  "${COMFY_MEMORY_ARGS[@]}" \
   "${COMFY_MODEL_PATH_ARGS[@]}" \
   > "${COMFY_ROOT}/.run/comfyui.out.log" \
   2> "${COMFY_ROOT}/.run/comfyui.err.log" \
