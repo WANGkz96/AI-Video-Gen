@@ -60,6 +60,7 @@ class JobRuntime:
     snapshot_path: Path
     logs_path: Path
     backend_params: dict[str, Any] = field(default_factory=dict)
+    result_doc: dict[str, Any] | None = None
     logs: list[LogEntry] = field(default_factory=list)
     subscribers: list[asyncio.Queue[dict[str, Any]]] = field(default_factory=list)
 
@@ -733,6 +734,11 @@ class JobService:
                 work_items.append((video, variant, variant_entry))
             result_doc["videos"].append(video_entry)
 
+        # Publish a recoverable result manifest before expensive work starts.
+        # Snapshot updates persist completed artifact references as they arrive;
+        # /result and /files can then rescue them even if another backend dies.
+        runtime.result_doc = result_doc
+        self._write_snapshot(runtime)
         pending_backends: list[str] = []
         if any(
             variant.manifest is not None and bool(variant.manifest.segments)
@@ -858,30 +864,19 @@ class JobService:
             try:
                 await self._process_generation_branch(runtime, backend, work_items)
             except LongCatRuntimeFatalError as exc:
-                # A poisoned/unsupported CUDA environment will fail identically
-                # for every video's LongCat batch. Stop this branch, but let an
-                # independent LTX branch finish so its artifacts survive the
-                # outer Packet retry on a fresh instance.
+                # On Packet SM120 this can also poison the already initialized
+                # Comfy process: its next VAE upload hangs and can segfault.
+                # Finalize the partial archive now, before another GPU backend
+                # consumes the no-progress timeout. The outer retry can safely
+                # move only missing artifacts to a fresh instance.
                 await self._set_branch_state(runtime, backend, "failed", error=str(exc))
                 await self._log(runtime, "error", f"Generation branch '{backend}' aborted: {exc}")
                 pending_backends.remove(backend)
-                if (
-                    backend == LongCatAvatarAdapter.key
-                    and ComfyUiWorkflowAdapter.key in pending_backends
-                    and self._settings.release_longcat_weights_after_branch
-                ):
-                    released_path, was_released = await asyncio.to_thread(self._release_longcat_weights)
-                    release_signal = await asyncio.to_thread(self._signal_longcat_branch_release)
-                    await self._log(
-                        runtime,
-                        "warning",
-                        (
-                            f"LongCat failed; {'released' if was_released else 'retained'} weights at "
-                            f"{released_path} and opened the pending LTX branch"
-                            + (f" via {release_signal}." if release_signal else ".")
-                        ),
-                    )
-                continue
+                for remaining in pending_backends:
+                    await self._set_branch_state(runtime, remaining, "failed", error="Fresh GPU required after fatal CUDA failure.")
+                pending_backends.clear()
+                await self._log(runtime, "warning", "Finalizing completed artifacts; remaining GPU work requires a fresh instance.")
+                return
             pending_backends.remove(backend)
             await self._set_branch_state(runtime, backend, "completed")
             await self._log(runtime, "info", f"Generation branch '{backend}' completed.")
@@ -1303,8 +1298,13 @@ class JobService:
                 [request for _scene, request, _entry in prepared],
             )
         except Exception as exc:
-            for scene, _request, scene_entry in prepared:
-                await self._record_dialogue_scene_failure(runtime, scene_entry, scene.sceneId, exc)
+            partial_artifacts = getattr(exc, "artifacts", {}) if isinstance(exc, LongCatRuntimeFatalError) else {}
+            for scene, request, scene_entry in prepared:
+                artifact = partial_artifacts.get(scene.sceneId)
+                if artifact is not None:
+                    await self._record_dialogue_scene_success(runtime, video, variant, scene, request, artifact, scene_entry)
+                else:
+                    await self._record_dialogue_scene_failure(runtime, scene_entry, scene.sceneId, exc)
             if isinstance(exc, LongCatRuntimeFatalError):
                 raise
             return
@@ -2017,11 +2017,15 @@ class JobService:
                 runtime.subscribers.remove(subscriber)
 
     def _write_snapshot(self, runtime: JobRuntime) -> None:
+        if runtime.result_doc is not None:
+            self._write_json(runtime.result_path, runtime.result_doc)
         self._write_json(runtime.snapshot_path, runtime.snapshot.model_dump(mode="json"))
 
     def _write_json(self, path: Path, payload: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary = path.with_name(path.name + ".tmp")
+        temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(path)
 
     def _build_direct_batch_payload(self, request: DirectGenerationRequest) -> dict[str, Any]:
         exported_at = utc_now().isoformat()

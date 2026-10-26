@@ -377,6 +377,8 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
         poll_sec = max(0.25, float(os.getenv("COMFYUI_POLL_SEC", "2")))
         deadline = time.monotonic() + timeout_sec
         last_payload: dict | None = None
+        unavailable_since: float | None = None
+        unavailable_timeout = self._env_float("COMFYUI_UNAVAILABLE_TIMEOUT_SEC", 60.0, minimum=1.0)
 
         while time.monotonic() < deadline:
             try:
@@ -387,8 +389,16 @@ class ComfyUiWorkflowAdapter(BaseGeneratorAdapter):
                 response.raise_for_status()
             except httpx.HTTPError as exc:
                 last_payload = {"pollError": str(exc)}
+                if unavailable_since is None:
+                    unavailable_since = time.monotonic()
+                if time.monotonic() - unavailable_since >= unavailable_timeout:
+                    raise AdapterUnavailableError(
+                        f"ComfyUI became unavailable while waiting for prompt {prompt_id}; "
+                        "preserve completed artifacts and retry unfinished work on a healthy process."
+                    ) from exc
                 await asyncio.sleep(poll_sec)
                 continue
+            unavailable_since = None
             payload = response.json()
             if isinstance(payload, dict) and prompt_id in payload:
                 history = payload[prompt_id]

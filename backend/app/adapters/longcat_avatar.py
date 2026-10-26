@@ -18,7 +18,12 @@ from backend.app.models import (
 
 
 class LongCatRuntimeFatalError(RuntimeError):
-    """The GPU runtime cannot load LongCat and must not be retried per video."""
+    """CUDA is unsafe; preserve healthy scenes and retry on a fresh GPU."""
+
+    def __init__(self, message: str, *, artifacts=None, errors=None):
+        super().__init__(message)
+        self.artifacts = artifacts or {}
+        self.errors = errors or {}
 
 
 class LongCatAvatarAdapter(BaseGeneratorAdapter):
@@ -296,6 +301,12 @@ class LongCatAvatarAdapter(BaseGeneratorAdapter):
                     "processReturnCode": process_return_codes.get(request.sceneId),
                     "processReturnedNonZeroAfterResults": process_return_codes.get(request.sceneId) != 0,
                 },
+            )
+        if any(marker in log_text.lower() for marker in retryable_markers):
+            raise LongCatRuntimeFatalError(
+                f"LongCat CUDA context failed; preserving completed scenes for retry. Diagnostics: {log_path.as_posix()}",
+                artifacts=artifacts,
+                errors=errors,
             )
         return artifacts, errors
 

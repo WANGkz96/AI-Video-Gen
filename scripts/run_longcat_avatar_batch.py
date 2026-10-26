@@ -467,6 +467,13 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _write_batch_results(result_path: Path, results: list[dict[str, Any]]) -> None:
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = result_path.with_name(result_path.name + ".tmp")
+    temporary.write_text(json.dumps({"scenes": results}, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.replace(result_path)
+
+
 def main() -> None:
     args = _parse_args()
     batch_path = Path(args.batch_manifest).resolve()
@@ -484,9 +491,11 @@ def main() -> None:
             try:
                 output_path = _render_scene(runtime, scene)
                 results.append({"sceneId": scene_id, "status": "completed", "outputPath": output_path})
+                _write_batch_results(result_path, results)
                 print(f"[BATCH] Completed scene {index}/{len(scenes)}: {scene_id}", flush=True)
             except Exception as exc:  # preserve healthy scenes in a partially bad batch
                 results.append({"sceneId": scene_id, "status": "failed", "error": str(exc), "traceback": traceback.format_exc()})
+                _write_batch_results(result_path, results)
                 print(f"[BATCH] Failed scene {index}/{len(scenes)}: {scene_id}: {exc}", flush=True)
                 # An illegal address leaves every subsequent CUDA call in this
                 # process invalid. Stop immediately so the adapter can retry
@@ -494,8 +503,7 @@ def main() -> None:
                 if _cuda_context_is_corrupted(exc):
                     print("[BATCH] CUDA context is corrupted; aborting this attempt for a clean-process retry.", flush=True)
                     break
-        result_path.parent.mkdir(parents=True, exist_ok=True)
-        result_path.write_text(json.dumps({"scenes": results}, ensure_ascii=False, indent=2), encoding="utf-8")
+        _write_batch_results(result_path, results)
         if any(item["status"] == "failed" for item in results):
             raise RuntimeError("One or more LongCat dialogue scenes failed; see result_manifest.")
     finally:
