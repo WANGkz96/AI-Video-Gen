@@ -137,6 +137,17 @@ def _configure_vae_cudnn(vae: Any) -> None:
     print("[INFO] cuDNN enabled for LongCat VAE; audio keeps the Blackwell workaround.", flush=True)
 
 
+def _preload_vae(vae: Any, rank: int) -> None:
+    """Optional, narrow workaround for a confirmed hang in VAE's async upload."""
+    if os.getenv("LONGCAT_PRELOAD_VAE", "0") != "1":
+        return
+    if not torch.cuda.is_available() or torch.cuda.get_device_capability(rank) != (12, 0):
+        return
+    vae.to(rank, non_blocking=False)
+    torch.cuda.synchronize(rank)
+    print("[INFO] LongCat VAE preloaded synchronously before DiT/text transfers.", flush=True)
+
+
 def _load_runtime(args: argparse.Namespace) -> Runtime:
     if torch.cuda.is_available() and torch.cuda.get_device_capability() == (12, 0):
         # Matches the tested Blackwell workaround in patch_longcat_runtime.py.
@@ -163,6 +174,7 @@ def _load_runtime(args: argparse.Namespace) -> Runtime:
     text_encoder = UMT5EncoderModel.from_pretrained(runtime_dir, subfolder="text_encoder", torch_dtype=torch.bfloat16)
     vae = AutoencoderKLWan.from_pretrained(runtime_dir, subfolder="vae", torch_dtype=torch.bfloat16)
     _configure_vae_cudnn(vae)
+    _preload_vae(vae, rank)
     scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
         checkpoint_dir,
         subfolder="scheduler",

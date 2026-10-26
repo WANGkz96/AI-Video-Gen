@@ -89,6 +89,40 @@ class JobService:
             pass
         self._worker_task = None
 
+    async def restore_empty_job(self, job_id: str) -> None:
+        """Explicit recovery after process restart, only before any media exists.
+
+        Jobs with completed/partial media must use the normal missing-only archive
+        recovery. Nothing is automatically discovered or restarted at service boot.
+        """
+        if not job_id.startswith("job_") or not job_id.replace("_", "").isalnum():
+            raise ValueError("Invalid recovery job id.")
+        if self._jobs or not self._queue.empty():
+            raise RuntimeError("Empty-job recovery requires an idle service.")
+        workspace = self._workspace_dir(job_id)
+        snapshot = self._read_snapshot(job_id)
+        if snapshot.status not in {"queued", "running", "waiting_for_backend"}:
+            raise ValueError("Only an interrupted nonterminal job may be restored.")
+        if snapshot.completedSegments or snapshot.failedSegments or snapshot.finishedAt:
+            raise ValueError("Use missing-only archive recovery for a job with processed media.")
+        if any((workspace / "videos").rglob("*.mp4")):
+            raise ValueError("Existing media requires missing-only archive recovery.")
+        input_path = workspace / "input" / "batch.json"
+        batch = BatchExport.model_validate_json(input_path.read_text(encoding="utf-8"))
+        logs_path = workspace / "logs.jsonl"
+        logs = [LogEntry.model_validate_json(line) for line in logs_path.read_text(encoding="utf-8").splitlines() if line.strip()] if logs_path.exists() else []
+        snapshot.status = "queued"
+        snapshot.error = None
+        snapshot.updatedAt = utc_now()
+        runtime = JobRuntime(snapshot=snapshot, batch=batch, workspace_dir=workspace,
+                             input_path=input_path, result_path=workspace / "result.json",
+                             archive_path=self._settings.archive_dir / f"{job_id}.zip",
+                             snapshot_path=workspace / "job.json", logs_path=logs_path, logs=logs)
+        self._jobs[job_id] = runtime
+        self._write_snapshot(runtime)
+        await self._log(runtime, "warning", "Explicitly restored the same interrupted job before any media was generated.")
+        await self._queue.put(job_id)
+
     def health(self) -> dict[str, Any]:
         active_jobs = sum(
             1
