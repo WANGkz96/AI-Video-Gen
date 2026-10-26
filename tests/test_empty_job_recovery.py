@@ -6,10 +6,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock
+from unittest.mock import AsyncMock
 
 import pytest
 
 from backend.app.services.jobs import JobService
+from backend.app.adapters.longcat_avatar import LongCatAvatarAdapter
 
 ROOT = Path(__file__).resolve().parents[1]
 JOB = 'job_20261026_220022_786491_0001'
@@ -83,3 +85,49 @@ def test_vae_preload_is_opt_in_and_only_for_sm120(monkeypatch, enabled, cap, exp
     if expected:
         vae.to.assert_called_once_with(0, non_blocking=False)
         cuda.synchronize.assert_called_once_with(0)
+
+
+@pytest.mark.parametrize('enabled,cap,serial', [(False, (12, 0), False), (True, (8, 0), False), (True, (12, 0), True)])
+def test_serial_upload_preserves_components_lora_and_upstream_default(monkeypatch, enabled, cap, serial):
+    source = ast.parse((ROOT / 'scripts/run_longcat_avatar_batch.py').read_text())
+    node = next(n for n in source.body if isinstance(n, ast.FunctionDef) and n.name == '_upload_pipeline')
+    events = []
+    def component(name):
+        obj = SimpleNamespace()
+        def move(rank, **kwargs):
+            assert rank == 0 and kwargs == {'non_blocking': False}
+            events.append(name)
+            return obj
+        obj.to = move
+        return obj
+    pipe = SimpleNamespace(dit=component('dit'), text_encoder=component('text'), vae=component('vae'), to=Mock())
+    pipe.dit.lora_dict = {'dmd': SimpleNamespace(loras=[component('lora')])}
+    cuda = SimpleNamespace(get_device_capability=lambda _: cap, synchronize=lambda rank: events.append('fence'))
+    namespace = dict(os=os, torch=SimpleNamespace(cuda=cuda), Any=Any)
+    exec(compile(ast.Module(body=[node], type_ignores=[]), '<upload>', 'exec'), namespace)
+    monkeypatch.setenv('LONGCAT_SERIAL_MODEL_UPLOAD', '1' if enabled else '0')
+    namespace['_upload_pipeline'](pipe, 0)
+    if serial:
+        assert events == ['dit', 'lora', 'fence', 'text', 'fence', 'vae', 'fence']
+        assert pipe.device == 0
+        pipe.to.assert_not_called()
+    else:
+        assert events == []
+        pipe.to.assert_called_once_with(0)
+
+
+def test_longcat_log_is_readable_before_process_completion(tmp_path):
+    async def run():
+        stream = asyncio.StreamReader()
+        process = SimpleNamespace(stdout=stream, wait=AsyncMock(return_value=0))
+        target = tmp_path / 'live.log'
+        task = asyncio.create_task(LongCatAvatarAdapter._capture_process_log(process, target))
+        stream.feed_data(b'uploading\n')
+        await asyncio.sleep(0)
+        assert target.read_bytes() == b'uploading\n'
+        assert not task.done()
+        stream.feed_data(b'done\n')
+        stream.feed_eof()
+        assert await task == 'uploading\ndone\n'
+        process.wait.assert_awaited_once()
+    asyncio.run(run())

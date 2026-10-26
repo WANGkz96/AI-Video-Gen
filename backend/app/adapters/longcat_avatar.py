@@ -195,10 +195,8 @@ class LongCatAvatarAdapter(BaseGeneratorAdapter):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )
-            stdout, _ = await process.communicate()
-            attempt_log = stdout.decode("utf-8", errors="replace")
             attempt_log_path = attempt_dir / "longcat-batch.log"
-            attempt_log_path.write_text(attempt_log, encoding="utf-8")
+            attempt_log = await self._capture_process_log(process, attempt_log_path)
             attempt_logs.append(attempt_log_path.as_posix())
             attempt_results.append(attempt_result.as_posix())
 
@@ -309,6 +307,18 @@ class LongCatAvatarAdapter(BaseGeneratorAdapter):
                 errors=errors,
             )
         return artifacts, errors
+
+    @staticmethod
+    async def _capture_process_log(process, target: Path) -> str:
+        """Keep diagnostics available while the generation child is still alive."""
+        if process.stdout is None:
+            raise RuntimeError("LongCat stdout pipe is unavailable.")
+        with target.open("wb") as output:
+            while chunk := await process.stdout.read(64 * 1024):
+                output.write(chunk)
+                output.flush()
+        await process.wait()
+        return target.read_text(encoding="utf-8", errors="replace")
 
     def _prepare_scene(self, request: DialogueSceneGenerationRequest) -> dict[str, object]:
 

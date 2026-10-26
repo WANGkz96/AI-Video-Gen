@@ -148,6 +148,27 @@ def _preload_vae(vae: Any, rank: int) -> None:
     print("[INFO] LongCat VAE preloaded synchronously before DiT/text transfers.", flush=True)
 
 
+def _upload_pipeline(pipe: Any, rank: int) -> None:
+    if os.getenv("LONGCAT_SERIAL_MODEL_UPLOAD", "0") != "1" or torch.cuda.get_device_capability(rank) != (12, 0):
+        pipe.to(rank)
+        return
+    # Operator fallback after repeated hangs in different async component uploads.
+    # Preserve upstream components/LoRA and their order; only fence the transfers.
+    pipe.device = rank
+    for name in ("dit", "text_encoder", "vae"):
+        component = getattr(pipe, name, None)
+        if component is None:
+            continue
+        print(f"[INFO] Uploading LongCat {name} synchronously.", flush=True)
+        setattr(pipe, name, component.to(rank, non_blocking=False))
+        if name == "dit":
+            for network in (getattr(pipe.dit, "lora_dict", {}) or {}).values():
+                for lora in network.loras:
+                    lora.to(rank, non_blocking=False)
+        torch.cuda.synchronize(rank)
+        print(f"[INFO] LongCat {name} upload complete.", flush=True)
+
+
 def _load_runtime(args: argparse.Namespace) -> Runtime:
     if torch.cuda.is_available() and torch.cuda.get_device_capability() == (12, 0):
         # Matches the tested Blackwell workaround in patch_longcat_runtime.py.
@@ -219,7 +240,7 @@ def _load_runtime(args: argparse.Namespace) -> Runtime:
         audio_feature_extractor=audio_feature_extractor,
         model_type="avatar-v1.5",
     )
-    pipe.to(rank)
+    _upload_pipeline(pipe, rank)
     print("[INFO] LongCat models loaded; rendering scenes without further weight reloads.", flush=True)
     return Runtime(
         checkpoint_dir=checkpoint_dir,
