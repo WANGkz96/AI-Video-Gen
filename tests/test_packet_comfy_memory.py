@@ -1,4 +1,5 @@
 from pathlib import Path
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -6,6 +7,18 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_remote_api_uses_an_isolated_process_session():
     script = (ROOT / 'scripts/run_remote_server.sh').read_text()
     assert 'nohup setsid env PORT=' in script
+
+
+def test_ltx25_downloader_reports_its_actual_model_family(monkeypatch, tmp_path):
+    from scripts.download_comfy_ltx25_models import downloader
+    messages = []
+    monkeypatch.setattr(sys, 'argv', ['download', '--comfy-root', str(tmp_path), '--verify-only'])
+    monkeypatch.setattr(downloader, 'discover_model_sizes', lambda *a, **kw: {})
+    monkeypatch.setattr(downloader, 'verify_hf_file', lambda *a, **kw: True)
+    monkeypatch.setattr(downloader, 'write_status', lambda *a, **kw: messages.append(kw['message']))
+    downloader.main()
+    assert messages == ['Checking required LTX 2.5 files.', 'All required LTX 2.5 files are ready.']
+    assert 'LTX 2.5' in downloader.build_parser().description
 
 
 def test_packet_caps_host_threads_and_selects_safe_allocator():

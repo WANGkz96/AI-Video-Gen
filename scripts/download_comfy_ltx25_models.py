@@ -75,6 +75,7 @@ MODEL_FILES = [
 
 
 downloader.MODEL_FILES = MODEL_FILES
+downloader.MODEL_FAMILY = "LTX 2.5"
 
 
 if __name__ == "__main__":

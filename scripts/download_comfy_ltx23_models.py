@@ -13,6 +13,7 @@ from urllib.parse import quote
 
 import httpx
 
+MODEL_FAMILY = "LTX 2.3"
 
 @dataclass(frozen=True)
 class ComfyModelFile:
@@ -88,7 +89,7 @@ STATUS_WRITE_LOCK = Lock()
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Download the ComfyUI LTX 2.3 workflow model files into a ComfyUI tree."
+        description=f"Download the ComfyUI {MODEL_FAMILY} workflow model files into a ComfyUI tree."
     )
     parser.add_argument(
         "--comfy-root",
@@ -647,7 +648,7 @@ def main() -> None:
         status_file,
         comfy_root,
         status="verifying",
-        message="Checking required LTX 2.3 files.",
+        message=f"Checking required {MODEL_FAMILY} files.",
         expected_total_by_model=expected_total_by_model,
     )
 
@@ -674,7 +675,7 @@ def main() -> None:
             status_file,
             comfy_root,
             status="ready",
-            message="All required LTX 2.3 files are ready.",
+            message=f"All required {MODEL_FAMILY} files are ready.",
             expected_total_by_model=expected_total_by_model,
         )
         return
@@ -727,7 +728,7 @@ def main() -> None:
             status_file,
             comfy_root,
             status="ready",
-            message="All required LTX 2.3 files are ready.",
+            message=f"All required {MODEL_FAMILY} files are ready.",
             expected_total_by_model=expected_total_by_model,
         )
     except Exception as exc:
