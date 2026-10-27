@@ -4,6 +4,7 @@ import asyncio
 import json
 import math
 import os
+import signal
 import wave
 from pathlib import Path
 
@@ -138,6 +139,7 @@ class LongCatAvatarAdapter(BaseGeneratorAdapter):
             "illegal memory access",
             "device-side assert",
             "unspecified launch failure",
+            "longcat worker produced no output",
         )
 
         for attempt in range(1, max_attempts + 1):
@@ -194,6 +196,7 @@ class LongCatAvatarAdapter(BaseGeneratorAdapter):
                 env=env,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
+                start_new_session=os.name == "posix",
             )
             attempt_log_path = attempt_dir / "longcat-batch.log"
             attempt_log = await self._capture_process_log(process, attempt_log_path)
@@ -261,7 +264,7 @@ class LongCatAvatarAdapter(BaseGeneratorAdapter):
         }
         if not completed_scene_ids and any(marker in log_text.lower() for marker in retryable_markers):
             raise LongCatRuntimeFatalError(
-                "LongCat CUDA runtime failed before producing any scene after "
+                "LongCat runtime failed before producing any scene after "
                 f"{len(attempt_logs)} clean-process attempts; aborting this GPU branch so "
                 "the outer Packet retry can move the missing scenes to a fresh instance. "
                 f"Diagnostics: {log_path.as_posix()}"
@@ -309,12 +312,35 @@ class LongCatAvatarAdapter(BaseGeneratorAdapter):
         return artifacts, errors
 
     @staticmethod
-    async def _capture_process_log(process, target: Path) -> str:
+    async def _capture_process_log(process, target: Path, *, timeout_sec: float | None = None) -> str:
         """Keep diagnostics available while the generation child is still alive."""
         if process.stdout is None:
             raise RuntimeError("LongCat stdout pipe is unavailable.")
+        if timeout_sec is None:
+            timeout_sec = float(os.getenv("LONGCAT_WORKER_SILENCE_TIMEOUT_SEC", "600"))
+        if not math.isfinite(timeout_sec) or timeout_sec <= 0:
+            raise ValueError("LongCat worker silence timeout must be positive and finite.")
         with target.open("wb") as output:
-            while chunk := await process.stdout.read(64 * 1024):
+            while True:
+                try:
+                    chunk = await asyncio.wait_for(process.stdout.read(64 * 1024), timeout=timeout_sec)
+                except asyncio.TimeoutError:
+                    output.write(f"\n[FATAL] LongCat worker produced no output for {timeout_sec:g}s; terminating its process group.\n".encode())
+                    output.flush()
+                    # torchrun's model and compiler children must not outlive it.
+                    try:
+                        if os.name == "posix":
+                            os.killpg(process.pid, signal.SIGKILL)
+                        else:
+                            process.kill()
+                    except ProcessLookupError:
+                        pass
+                    tail, _ = await asyncio.wait_for(process.communicate(), timeout=30)
+                    if tail:
+                        output.write(tail)
+                    break
+                if not chunk:
+                    break
                 output.write(chunk)
                 output.flush()
         await process.wait()

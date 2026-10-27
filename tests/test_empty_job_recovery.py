@@ -133,6 +133,26 @@ def test_longcat_log_is_readable_before_process_completion(tmp_path):
     asyncio.run(run())
 
 
+def test_silent_longcat_worker_is_killed_and_log_retained(tmp_path, monkeypatch):
+    async def run():
+        stream = asyncio.StreamReader()
+        process = SimpleNamespace(stdout=stream, pid=987654, kill=Mock(),
+                                  wait=AsyncMock(return_value=-9),
+                                  communicate=AsyncMock(return_value=(b'last diagnostic\n', None)))
+        kill_group = Mock()
+        monkeypatch.setattr(os, 'killpg', kill_group, raising=False)
+        target = tmp_path / 'stalled.log'
+        stream.feed_data(b'uploading\n')
+        result = await LongCatAvatarAdapter._capture_process_log(process, target, timeout_sec=0.01)
+        assert 'uploading' in result and 'LongCat worker produced no output' in result
+        assert 'last diagnostic' in result
+        if os.name == 'posix':
+            kill_group.assert_called_once()
+        else:
+            process.kill.assert_called_once()
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize('device,providers,expected', [
     ('cuda', None, 'cpu'), ('cuda:0', ['CPUExecutionProvider'], 'cpu'),
     ('cuda', ['CUDAExecutionProvider', 'CPUExecutionProvider'], 'cuda'),
