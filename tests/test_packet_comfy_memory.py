@@ -9,6 +9,7 @@ def test_packet_caps_host_threads_and_selects_safe_allocator():
     for variable in ('OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'NUMEXPR_NUM_THREADS'):
         assert f'export {variable}="${{AI_VIDEO_GEN_CPU_THREADS}}"' in script
     assert 'export COMFYUI_SAFE_CUDA_MEMORY="${COMFYUI_SAFE_CUDA_MEMORY:-1}"' in script
+    assert 'export LONGCAT_OFFLOAD_ENCODERS="${LONGCAT_OFFLOAD_ENCODERS:-1}"' in script
     assert 'AI_VIDEO_GEN_CPU_THREADS must be a positive integer.' in script
 
 
