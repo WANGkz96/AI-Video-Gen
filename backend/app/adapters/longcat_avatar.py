@@ -293,6 +293,8 @@ class LongCatAvatarAdapter(BaseGeneratorAdapter):
                     "batchManifest": batch_manifest.as_posix(),
                     "batchResult": result_manifest.as_posix(),
                     "batchSceneCount": len(requests),
+                    "elapsedSec": result.get("elapsedSec"),
+                    "runtimeLoadSec": result.get("runtimeLoadSec"),
                     "numSegments": item["numSegments"],
                     "durationSec": request.durationSec,
                     "fps": 25,

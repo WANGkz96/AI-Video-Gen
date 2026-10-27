@@ -19,6 +19,7 @@ import datetime
 import json
 import math
 import os
+import time
 import traceback
 from dataclasses import dataclass
 from functools import wraps
@@ -554,15 +555,21 @@ def main() -> None:
     results: list[dict[str, Any]] = []
     runtime: Runtime | None = None
     try:
+        runtime_started = time.perf_counter()
         runtime = _load_runtime(args)
+        runtime_load_sec = round(time.perf_counter() - runtime_started, 3)
+        print(f"[BATCH] Models loaded in {runtime_load_sec:.3f}s", flush=True)
         for index, scene in enumerate(scenes, start=1):
             scene_id = str(scene.get("sceneId") or index)
             print(f"[BATCH] Starting scene {index}/{len(scenes)}: {scene_id}", flush=True)
+            scene_started = time.perf_counter()
             try:
                 output_path = _render_scene(runtime, scene)
-                results.append({"sceneId": scene_id, "status": "completed", "outputPath": output_path})
+                elapsed_sec = round(time.perf_counter() - scene_started, 3)
+                results.append({"sceneId": scene_id, "status": "completed", "outputPath": output_path,
+                                "elapsedSec": elapsed_sec, "runtimeLoadSec": runtime_load_sec})
                 _write_batch_results(result_path, results)
-                print(f"[BATCH] Completed scene {index}/{len(scenes)}: {scene_id}", flush=True)
+                print(f"[BATCH] Completed scene {index}/{len(scenes)}: {scene_id} in {elapsed_sec:.3f}s", flush=True)
             except Exception as exc:  # preserve healthy scenes in a partially bad batch
                 results.append({"sceneId": scene_id, "status": "failed", "error": str(exc), "traceback": traceback.format_exc()})
                 _write_batch_results(result_path, results)
