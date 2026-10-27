@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock
 from unittest.mock import AsyncMock
+from functools import wraps
 
 import pytest
 
@@ -151,6 +152,30 @@ def test_silent_longcat_worker_is_killed_and_log_retained(tmp_path, monkeypatch)
         else:
             process.kill.assert_called_once()
     asyncio.run(run())
+
+
+def test_encoder_offload_preserves_embeddings_and_call_arguments(monkeypatch):
+    source = ast.parse((ROOT / 'scripts/run_longcat_avatar_batch.py').read_text())
+    node = next(n for n in source.body if isinstance(n, ast.FunctionDef) and n.name == '_configure_encoder_offload')
+    events = []
+    text = SimpleNamespace(to=lambda device, **kw: events.append(('text', device)))
+    audio = SimpleNamespace(to=lambda device, **kw: events.append(('audio', device)))
+    embeddings = object()
+    def encode(*args, **kwargs):
+        events.append(('encode', args, kwargs))
+        return embeddings
+    pipe = SimpleNamespace(text_encoder=text, audio_encoder=audio, encode_prompt=encode, get_audio_embedding=encode)
+    namespace = dict(os=os, Any=Any, wraps=wraps, torch=SimpleNamespace(cuda=SimpleNamespace(empty_cache=lambda: None)))
+    exec(compile(ast.Module(body=[node], type_ignores=[]), '<offload>', 'exec'), namespace)
+    monkeypatch.setenv('LONGCAT_OFFLOAD_ENCODERS', '1')
+    namespace['_configure_encoder_offload'](pipe, 0)
+    assert events == [('text', 'cpu'), ('audio', 'cpu')]
+    events.clear()
+    assert pipe.encode_prompt('scene', device=0) is embeddings
+    assert events == [('text', 0), ('encode', ('scene',), {'device': 0}), ('text', 'cpu')]
+    events.clear()
+    assert pipe.get_audio_embedding('audio') is embeddings
+    assert events == [('audio', 0), ('encode', ('audio',), {}), ('audio', 'cpu')]
 
 
 @pytest.mark.parametrize('device,providers,expected', [

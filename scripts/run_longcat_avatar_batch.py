@@ -156,6 +156,8 @@ def _upload_pipeline(pipe: Any, rank: int) -> None:
     # Preserve upstream components/LoRA and their order; only fence the transfers.
     pipe.device = rank
     for name in ("dit", "text_encoder", "vae"):
+        if name == "text_encoder" and os.getenv("LONGCAT_OFFLOAD_ENCODERS", "0") == "1":
+            continue
         component = getattr(pipe, name, None)
         if component is None:
             continue
@@ -167,6 +169,30 @@ def _upload_pipeline(pipe: Any, rank: int) -> None:
                     lora.to(rank, non_blocking=False)
         torch.cuda.synchronize(rank)
         print(f"[INFO] LongCat {name} upload complete.", flush=True)
+
+
+def _configure_encoder_offload(pipe: Any, rank: int) -> None:
+    """Retain embeddings on GPU while releasing idle encoder weights between phases."""
+    if os.getenv("LONGCAT_OFFLOAD_ENCODERS", "0") != "1":
+        return
+
+    def wrap(method, component, label):
+        @wraps(method)
+        def call(*args, **kwargs):
+            component.to(rank, non_blocking=False)
+            result = method(*args, **kwargs)
+            component.to("cpu", non_blocking=False)
+            torch.cuda.empty_cache()
+            print(f"[INFO] LongCat {label} encoded; weights released to CPU.", flush=True)
+            return result
+        return call
+
+    for method_name, component_name in (("encode_prompt", "text_encoder"), ("get_audio_embedding", "audio_encoder")):
+        component = getattr(pipe, component_name)
+        component.to("cpu", non_blocking=False)
+        setattr(pipe, method_name, wrap(getattr(pipe, method_name), component, component_name))
+    torch.cuda.empty_cache()
+    print("[INFO] LongCat encoder offload enabled; DiT and VAE remain resident.", flush=True)
 
 
 def _configure_separator_device(separator: Any) -> None:
@@ -251,6 +277,7 @@ def _load_runtime(args: argparse.Namespace) -> Runtime:
         model_type="avatar-v1.5",
     )
     _upload_pipeline(pipe, rank)
+    _configure_encoder_offload(pipe, rank)
     print("[INFO] LongCat models loaded; rendering scenes without further weight reloads.", flush=True)
     return Runtime(
         checkpoint_dir=checkpoint_dir,
