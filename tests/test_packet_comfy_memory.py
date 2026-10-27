@@ -3,6 +3,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_remote_api_uses_an_isolated_process_session():
+    script = (ROOT / 'scripts/run_remote_server.sh').read_text()
+    assert 'nohup setsid env PORT=' in script
+
+
 def test_packet_caps_host_threads_and_selects_safe_allocator():
     script = (ROOT / 'scripts/deploy_packet.sh').read_text()
     assert 'AI_VIDEO_GEN_CPU_THREADS="${AI_VIDEO_GEN_CPU_THREADS:-6}"' in script
