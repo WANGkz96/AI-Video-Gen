@@ -25,6 +25,13 @@ COMFY_MEMORY_ARGS=()
 if [ "${COMFYUI_SAFE_CUDA_MEMORY:-0}" = "1" ]; then
   COMFY_MEMORY_ARGS=(--disable-cuda-malloc --disable-dynamic-vram --disable-async-offload --disable-pinned-memory)
 fi
+if [ -n "${COMFYUI_RESERVE_VRAM_GB:-}" ]; then
+  if ! [[ "${COMFYUI_RESERVE_VRAM_GB}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    echo "COMFYUI_RESERVE_VRAM_GB must be a nonnegative number." >&2
+    exit 1
+  fi
+  COMFY_MEMORY_ARGS+=(--reserve-vram "${COMFYUI_RESERVE_VRAM_GB}")
+fi
 pkill -f "${COMFY_ROOT}/main.py.*--port ${COMFY_PORT}" || true
 nohup "${COMFY_PYTHON}" "${COMFY_ROOT}/main.py" \
   --listen 127.0.0.1 --port "${COMFY_PORT}" --disable-auto-launch \

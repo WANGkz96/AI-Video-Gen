@@ -41,6 +41,14 @@ def test_shared_comfy_bootstrap_keeps_memory_switches_opt_in():
     assert 'CUDA_LAUNCH_BLOCKING' not in script
 
 
+def test_shared_comfy_accepts_an_explicit_vram_reserve_without_cpu_text_encoding():
+    script = (ROOT / 'scripts/start_comfyui.sh').read_text()
+    assert 'COMFY_MEMORY_ARGS+=(--reserve-vram "${COMFYUI_RESERVE_VRAM_GB}")' in script
+    assert 'COMFYUI_RESERVE_VRAM_GB must be a nonnegative number.' in script
+    assert '--normalvram' not in script
+    assert '--lowvram' not in script
+
+
 def test_mixed_standard_packet_prepares_but_defers_comfy_process():
     deploy = (ROOT / 'scripts/deploy_packet.sh').read_text()
     provision = (ROOT / 'scripts/provision_packet_comfyui.sh').read_text()

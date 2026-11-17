@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
+import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -14,6 +16,8 @@ from urllib.parse import quote
 import httpx
 
 MODEL_FAMILY = "LTX 2.3"
+OBSOLETE_MODEL_FILES: tuple[str, ...] = ()
+DOWNLOAD_SPACE_RESERVE = 512 * 1024 * 1024
 
 @dataclass(frozen=True)
 class ComfyModelFile:
@@ -190,6 +194,61 @@ def is_ready(path: Path) -> bool:
 
 def file_size(path: Path) -> int:
     return path.stat().st_size if path.is_file() else 0
+
+
+def prepare_download_space(
+    comfy_root: Path, expected_total_by_model: dict[str, int], *, force: bool
+) -> None:
+    """Retire explicitly superseded cache files and check the whole download set."""
+    root = comfy_root.resolve()
+    active = {model_target_path(model, root).resolve() for model in MODEL_FILES}
+    for relative_name in OBSOLETE_MODEL_FILES:
+        candidate = root / relative_name
+        resolved = candidate.resolve()
+        # Never follow a legacy symlink into another cache or remove an active model.
+        if (candidate.is_symlink() or not resolved.is_relative_to(root)
+                or resolved in active or not candidate.is_file()):
+            continue
+        reclaimed = candidate.stat().st_size
+        candidate.unlink()
+        print(f"[cache] Removed superseded model {candidate} ({reclaimed} bytes).", flush=True)
+
+    # Check each destination filesystem independently; model folders may be mounts.
+    required_by_device: dict[int, tuple[Path, int]] = {}
+    for model in MODEL_FILES:
+        target = model_target_path(model, root)
+        if is_ready(target) and not force:
+            continue
+        expected = expected_total_by_model.get(model.id, 0)
+        partial = 0 if force else file_size(target.with_suffix(f"{target.suffix}.tmp"))
+        required = max(0, expected - partial)
+        if not required:
+            continue
+        parent = target.parent
+        while not parent.exists():
+            parent = parent.parent
+        device = parent.stat().st_dev
+        previous = required_by_device.get(device, (parent, 0))[1]
+        required_by_device[device] = (parent, previous + required)
+    for parent, required in required_by_device.values():
+        free = shutil.disk_usage(parent).free
+        if free < required + DOWNLOAD_SPACE_RESERVE:
+            raise OSError(
+                errno.ENOSPC,
+                f"Model cache {parent}: insufficient disk space; need {required} more bytes "
+                f"plus {DOWNLOAD_SPACE_RESERVE} bytes reserve, only {free} bytes available. "
+                "Free cache space or increase the volume before retrying.",
+            )
+
+
+def is_storage_capacity_error(error: BaseException) -> bool:
+    seen: set[int] = set()
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        if isinstance(error, OSError) and error.errno in {errno.ENOSPC, getattr(errno, "EDQUOT", 122)}:
+            return True
+        error = error.__cause__ or error.__context__
+    return False
 
 
 def parse_total_size(response: httpx.Response, starting_bytes: int) -> int | None:
@@ -600,7 +659,9 @@ def copy_hf_file(
         except Exception as exc:
             error = str(exc)
             error_by_model[model.id] = error
-            should_retry = max_attempts == 0 or attempt < max_attempts
+            should_retry = not is_storage_capacity_error(exc) and (
+                max_attempts == 0 or attempt < max_attempts
+            )
             status = "retrying" if should_retry else "error"
             print(f"[{status}] {model.label}: {error}", flush=True)
             target_path = model_target_path(model, comfy_root)
@@ -681,6 +742,7 @@ def main() -> None:
         return
 
     try:
+        prepare_download_space(comfy_root, expected_total_by_model, force=args.force)
         max_workers = max(1, min(int(args.max_workers), len(MODEL_FILES)))
         if max_workers == 1:
             for index, model in enumerate(MODEL_FILES, start=1):

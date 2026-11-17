@@ -76,6 +76,12 @@ MODEL_FILES = [
 
 downloader.MODEL_FILES = MODEL_FILES
 downloader.MODEL_FAMILY = "LTX 2.5"
+# These downloaded artifacts were replaced by the current manifest. Keep the
+# migration confined to this LTX cache; LongCat weights and user media are untouched.
+downloader.OBSOLETE_MODEL_FILES = (
+    "models/text_encoders/gemma4_e2b_it_bf16.safetensors",
+    "models/vae/ltx-2.5-video-vae-conv-bf16.safetensors",
+)
 
 
 if __name__ == "__main__":
